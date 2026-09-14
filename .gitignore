@@ -1,0 +1,27 @@
+*.log
+.DS_Store
+.env
+.env.backup
+.env.production
+.phpactor.json
+.phpunit.result.cache
+/.fleet
+/.idea
+/.nova
+/.phpunit.cache
+/.vscode
+/.zed
+/auth.json
+/node_modules
+/public/build
+/public/hot
+/public/storage
+/storage/*.key
+/storage/pail
+# Per-tenant filesystem roots (tenancy `suffix_base` = tenants/): uploaded
+# center media, never source. Local and test runs create hundreds of these.
+/storage/tenants/
+/vendor
+Homestead.json
+Homestead.yaml
+Thumbs.db

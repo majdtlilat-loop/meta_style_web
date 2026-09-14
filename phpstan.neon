@@ -1,0 +1,16 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    # Ratchet: one level per phase, to 8 (docs/11-TESTING-STRATEGY.md §9).
+    # Raise it in its own commit so the diff is the fixes, not the feature.
+    level: 6
+
+    paths:
+        - app
+        - config
+        - database
+        - routes
+
+    # tests/ is excluded while the suite is Pest-closure heavy; it joins the
+    # analysed paths once the Pest PHPStan plugin is added in Phase 2.

@@ -1,0 +1,6 @@
+Tenant migrations live here. Written once, applied to every tenant database.
+
+Nothing is here yet: Phase 1 has no tenants and no tenant business tables.
+The first tenant migrations arrive in Phase 2 (docs/03-DATABASE-MIGRATIONS.md
+§7.1). Filenames are module-prefixed and timestamp-ordered; ordering must stay
+a single deterministic sequence across every tenant database.

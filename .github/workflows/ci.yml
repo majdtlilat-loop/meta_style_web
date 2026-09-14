@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, analyse, test
+    runs-on: ubuntu-latest
+
+    # CI runs MySQL 8 regardless of what developers use locally. MariaDB is a
+    # supported local engine, but its JSON and functional-index behaviour
+    # differs, so CI is the authority (docs/11-TESTING-STRATEGY.md §2).
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: meta_style_test_control
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          # 8.2 is the supported floor (docs/DECISIONS.md ADR-022).
+          php-version: '8.2'
+          extensions: pdo_mysql, mbstring, openssl, curl, fileinfo, zip, xml, bcmath
+          coverage: none
+          tools: composer:v2
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      # Deliberately the SAME command developers run before finishing
+      # (CLAUDE.md "Before you finish"): pint --test, phpstan, then the full
+      # Pest suite. One gate, one definition, no drift between local and CI.
+      #
+      # The tenant isolation suite is part of it and is never skipped
+      # (docs/11-TESTING-STRATEGY.md §4).
+      - name: composer check
+        run: composer check
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USERNAME: root
+          DB_PASSWORD: ''

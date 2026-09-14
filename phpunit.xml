@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+>
+    <testsuites>
+        <testsuite name="Unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="Feature">
+            <directory>tests/Feature</directory>
+        </testsuite>
+        <testsuite name="Architecture">
+            <directory>tests/Architecture</directory>
+        </testsuite>
+        <!-- Release gate. Never skipped. See docs/11-TESTING-STRATEGY.md §4. -->
+        <testsuite name="TenantIsolation">
+            <directory>tests/TenantIsolation</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="APP_MAINTENANCE_DRIVER" value="file"/>
+        <env name="BCRYPT_ROUNDS" value="4"/>
+        <env name="BROADCAST_CONNECTION" value="null"/>
+        <env name="CACHE_STORE" value="array"/>
+
+        <!--
+            Tests run against a REAL MySQL-compatible server. SQLite is not a
+            substitute: this system depends on MySQL JSON functions, generated
+            columns, collation and foreign key semantics, and a suite that is
+            green on SQLite and broken in production is worse than no suite.
+            See docs/11-TESTING-STRATEGY.md §2 and docs/DECISIONS.md ADR-016.
+
+            There is no `tenant` connection here either: it is created at
+            runtime only while a tenant is initialised, so an unbound query
+            fails immediately.
+        -->
+        <env name="DB_CONNECTION" value="control"/>
+        <env name="DB_CONTROL_DATABASE" value="meta_style_test_control"/>
+
+        <!--
+            Tenant databases created by the suite carry the test prefix, so
+            they can never collide with, or be mistaken for, a developer's real
+            tenant databases. TestDatabaseManager refuses to drop anything
+            without it.
+        -->
+        <env name="METASTYLE_TENANT_DB_PREFIX" value="meta_style_test_t"/>
+
+        <env name="MAIL_MAILER" value="array"/>
+        <env name="QUEUE_CONNECTION" value="database"/>
+        <env name="SESSION_DRIVER" value="array"/>
+        <env name="LOG_STACK" value="single"/>
+        <env name="PULSE_ENABLED" value="false"/>
+        <env name="TELESCOPE_ENABLED" value="false"/>
+        <env name="NIGHTWATCH_ENABLED" value="false"/>
+    </php>
+</phpunit>
