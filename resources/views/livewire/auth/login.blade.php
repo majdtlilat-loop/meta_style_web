@@ -1,38 +1,22 @@
-{{--
-    The center key names which center is being signed into — the session has no
-    tenant yet. It is opaque, revocable, and authorises nothing on its own
-    (docs/02-TENANCY.md §2.2, source 3).
---}}
-<div>
-    <h1>{{ __('Sign in') }}</h1>
-    <p class="sub">{{ __('Sign in to your center.') }}</p>
+<div class="auth-flow">
+    <header class="auth-heading">
+        <p class="eyebrow">{{ __('center_auth.common.center_account') }}</p>
+        <h1>{{ __('center_auth.login.title') }}</h1>
+    </header>
 
-    <div class="card">
-        <form wire:submit="submit">
-            <div class="field">
-                <label for="centerKey">{{ __('Center key') }}</label>
-                <input id="centerKey" type="text" wire:model="centerKey" autocomplete="off">
-                @error('centerKey') <p class="error">{{ $message }}</p> @enderror
-            </div>
+    {{-- Set by the password reset, shown once. --}}
+    <x-ui.flash key="password_reset" />
 
-            <div class="field">
-                <label for="identifier">{{ __('Email or phone') }}</label>
-                <input id="identifier" type="text" wire:model="identifier" autocomplete="username">
-                @error('identifier') <p class="error">{{ $message }}</p> @enderror
-            </div>
+    <form wire:submit="submit" novalidate>
+        <x-ui.input name="identifier" id="identifier" type="text" wire:model="identifier" :label="__('center_auth.fields.email_or_phone')" autocomplete="username" required autofocus />
+        <x-ui.password name="password" id="password" wire:model="password" :label="__('center_auth.fields.password')" autocomplete="current-password" required>
+            <x-slot:labelRow><a class="auth-inline-link" href="{{ route('password.request') }}">{{ __('center_auth.actions.forgot_password') }}</a></x-slot:labelRow>
+        </x-ui.password>
+        <label class="check-row"><input type="checkbox" wire:model="remember" name="remember" value="1"> <span>{{ __('ui.auth.remember_me') }}</span></label>
+        <x-ui.button type="submit" wire:loading.attr="data-loading" wire:target="submit">{{ __('center_auth.actions.sign_in') }}</x-ui.button>
+    </form>
 
-            <div class="field">
-                <label for="password">{{ __('Password') }}</label>
-                <input id="password" type="password" wire:model="password" autocomplete="current-password">
-                @error('password') <p class="error">{{ $message }}</p> @enderror
-            </div>
-
-            <button type="submit" class="btn">{{ __('Sign in') }}</button>
-        </form>
-    </div>
-
-    <p class="sub" style="margin-top:1.5rem">
-        {{ __('New here?') }}
-        <a href="{{ route('register') }}" wire:navigate>{{ __('Create a center') }}</a>
-    </p>
+    @if($registerUrl)
+        <p class="auth-alt">{{ __('center_auth.login.new_here') }} <a href="{{ $registerUrl }}">{{ __('center_auth.actions.create_center') }}</a></p>
+    @endif
 </div>

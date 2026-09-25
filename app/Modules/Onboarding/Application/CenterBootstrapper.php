@@ -159,7 +159,14 @@ final class CenterBootstrapper
      */
     public function rememberLocale(Registration $registration): void
     {
-        $this->locales->setEnabled([$registration->locale], $registration->locale);
+        // A Super Admin may enable several languages up front; a
+        // self-registration gets the one it registered in.
+        $chosen = $registration->options['locales'] ?? null;
+        $locales = is_array($chosen) && $chosen !== [] ? array_values(array_filter($chosen, 'is_string')) : [$registration->locale];
+        if (! in_array($registration->locale, $locales, true)) {
+            $locales[] = $registration->locale;
+        }
+        $this->locales->setEnabled($locales, $registration->locale);
 
         // Kept for the settings row's original readers. `TenantLocales` writes
         // the same key, so this is belt-and-braces rather than a second source

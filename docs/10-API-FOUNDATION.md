@@ -115,6 +115,13 @@ POS.INSUFFICIENT_PAYMENT       PAYMENT.PROVIDER_ERROR    PACKAGE.NO_SESSIONS_LEF
 `ENTITLEMENT.NOT_AVAILABLE` includes the missing key in `details` so clients can
 render a specific upgrade prompt rather than a generic error.
 
+The list above is the original sketch. What shipped is `App\Kernel\Http\ApiErrorCode`;
+for money that is `SALES.*` (Phase 9), `PAYMENTS.INVALID_TRANSITION`,
+`PAYMENTS.POLICY_VIOLATION`, `PAYMENTS.PROVIDER_UNSUPPORTED` (422),
+`PAYMENTS.PROVIDER_UNAVAILABLE` (503), `FINANCE.INVALID_TRANSITION` and
+`FINANCE.POLICY_VIOLATION` (422). `POS.INSUFFICIENT_PAYMENT` and
+`PAYMENT.PROVIDER_ERROR` were never created.
+
 ### 4.2 Status codes
 
 `200` ok · `201` created · `202` accepted (queued) · `204` no content ·
@@ -255,7 +262,16 @@ parsing, tenant resolved from the endpoint path or provider account mapping,
 persisted raw, then processed asynchronously. Always `200` quickly; never do
 business work inside the webhook request. Replay-protected by provider event id.
 
-**Outbound** (tenant integrations, deferred to post-Phase 13): reserved at
+> **Payment provider callbacks deviate, deliberately (ADR-060).** Phase 10
+> stores **no raw body** (payer data and a replayable signed message nobody
+> reads) and settles **synchronously**: verify the signature — or, for an
+> unsigned provider such as FIB, read the status back with the center's own
+> credentials — then one short, idempotent transaction keyed by a callback
+> fingerprint. Answers are `202`, `400` (rejected) or `503` (status unreadable,
+> so the provider retries). Revisit when callback volume or a second provider
+> makes the synchronous status query costly. docs/19 §§21–24.
+
+**Outbound** (tenant integrations, deferred to post-Phase 14): reserved at
 `/api/v1/tenant/webhooks`. Design constraints recorded now: signed payloads,
 exponential retry with a dead-letter, per-tenant secret, and a delivery log.
 

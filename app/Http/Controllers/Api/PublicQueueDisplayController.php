@@ -6,11 +6,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Kernel\Http\ApiResponse;
-use App\Modules\Queue\Application\Announcement;
 use App\Modules\Queue\Application\DisplayFeed;
+use App\Modules\Queue\Application\DisplayPresentation;
 use App\Modules\Queue\Domain\Models\QueueDisplay;
-use App\Modules\Queue\Domain\Models\QueueTicket;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
@@ -32,12 +32,22 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  *
  * ## Numbers and destinations, nothing else
  *
- * {@see DisplayFeed} names every field. No customer name, no phone, no notes,
- * no employee identity, no capacity, no internal ids (§14, §48).
+ * {@see DisplayFeed} names every field, the speech payload included. No
+ * customer name, no phone, no notes, no employee identity, no capacity, no
+ * internal ids — not even the call event's uuid (§13, §14, §48).
+ *
+ * ## The look of the screen rides along only when it changed
+ *
+ * `presentation_version` is a digest of the screen's labels, languages and
+ * promotional playlist ({@see DisplayPresentation}). The page sends the digest
+ * it holds as `pv`; the full presentation is added only when they differ, so a
+ * playlist or language change reaches the television within one poll and
+ * costs nothing the rest of the day. It never changes the queue half of the
+ * payload, and never the announcement.
  */
 final class PublicQueueDisplayController extends Controller
 {
-    public function __invoke(string $center, string $display, DisplayFeed $feed, Announcement $announcements): JsonResponse
+    public function __invoke(Request $request, string $center, string $display, DisplayFeed $feed, DisplayPresentation $presentations): JsonResponse
     {
         unset($center);
 
@@ -50,28 +60,17 @@ final class PublicQueueDisplayController extends Controller
             throw new NotFoundHttpException;
         }
 
+        // The announcement rides in the feed: it is built only for the CURRENT
+        // call and only when the screen MAY speak, which the feed answers —
+        // it owns both halves, the `queue_voice` entitlement and the screen's
+        // own setting (§16, §19).
         $payload = $feed->forDisplay($screen);
 
-        /*
-         * The announcement is built only for the CURRENT call, and only when
-         * the screen MAY speak — which the feed answers, because it owns both
-         * halves of that question: the `queue_voice` entitlement and the
-         * screen's own setting. A silent screen carries no speech payload at
-         * all: nothing for a browser to read out, and nothing extra on the wire
-         * every three seconds (§16, §19).
-         */
-        if ($feed->mayAnnounce($screen) && $payload['now_calling'] !== null) {
-            $ticket = QueueTicket::query()
-                ->with('servicePoint')
-                ->where('branch_id', $screen->branch_id)
-                ->where('last_announcement_uuid', $payload['now_calling']['announcement_id'])
-                ->first();
+        $presentation = $presentations->forDisplay($screen, app()->getLocale());
+        $payload['presentation_version'] = $presentation['version'];
 
-            $payload['announcement'] = $ticket instanceof QueueTicket
-                ? $announcements->forTicket($ticket, $screen->voiceLocales())
-                : null;
-        } else {
-            $payload['announcement'] = null;
+        if ($request->query('pv') !== $presentation['version']) {
+            $payload['presentation'] = $presentation;
         }
 
         return ApiResponse::data($payload);

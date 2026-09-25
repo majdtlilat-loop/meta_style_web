@@ -10,16 +10,21 @@ use App\Kernel\Audit\Enums\AuditCategory;
 use App\Kernel\Authorization\Permission;
 use App\Kernel\Entitlements\Entitlements;
 use App\Kernel\Privacy\Fingerprint;
+use App\Kernel\Security\Exceptions\MissingKeyVersion;
 use App\Kernel\Time\TimeWindow;
+use App\Modules\Booking\Application\BookingVerification;
 use App\Modules\Booking\Domain\Availability\AvailabilityEngine;
 use App\Modules\Booking\Domain\Availability\BranchCalendar;
 use App\Modules\Booking\Domain\Availability\EmployeeAssigner;
 use App\Modules\Booking\Domain\Availability\LineResolver;
 use App\Modules\Booking\Domain\Availability\ResourceAllocator;
 use App\Modules\Booking\Domain\Availability\Scheduler;
+use App\Modules\Booking\Domain\BookingReference;
 use App\Modules\Booking\Domain\BookingSettings;
 use App\Modules\Booking\Domain\Data\BookingActor;
 use App\Modules\Booking\Domain\Data\BookingRequest;
+use App\Modules\Booking\Domain\Data\BookingResult;
+use App\Modules\Booking\Domain\Data\MintedCode;
 use App\Modules\Booking\Domain\Data\ResolvedLine;
 use App\Modules\Booking\Domain\Data\ResourceAssignment;
 use App\Modules\Booking\Domain\Enums\AppointmentStatus;
@@ -33,6 +38,7 @@ use App\Modules\Resources\Domain\Models\ResourceType;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
+use Random\RandomException;
 
 /**
  * Creates an appointment. THE booking write path, for every channel.
@@ -81,6 +87,7 @@ final class CreateAppointment
 {
     public function __construct(
         private readonly Entitlements $entitlements,
+        private readonly BookingVerification $verification,
         private readonly AvailabilityEngine $availability,
         private readonly BranchCalendar $calendar,
         private readonly LineResolver $resolver,
@@ -96,14 +103,18 @@ final class CreateAppointment
     /**
      * @throws BookingFailed
      * @throws AuthorizationException
+     * @throws RandomException when no usable CSPRNG exists to draw a code from
+     * @throws MissingKeyVersion when no booking-verification pepper is configured
      */
-    public function __invoke(BookingRequest $request, BookingActor $actor, ?CarbonImmutable $now = null): Appointment
+    public function __invoke(BookingRequest $request, BookingActor $actor, ?CarbonImmutable $now = null): BookingResult
     {
         $this->entitlements->ensure('booking');
 
         $now ??= CarbonImmutable::now();
 
-        $public = $actor->isGuest();
+        // Guests AND the assistant are held to the public catalog: public
+        // branches, online-bookable services (§29).
+        $public = $actor->usesPublicCatalog();
         $branch = $this->availability->branch($request->branchUuid, $public);
 
         $this->authorize($actor, $branch);
@@ -136,9 +147,22 @@ final class CreateAppointment
 
         $customer = null;
 
+        /*
+         * The verification capability, minted BEFORE the transaction opens.
+         *
+         * Drawing from the CSPRNG and reading a configured key are the two
+         * steps here that can fail for reasons unrelated to this booking — no
+         * entropy source, no pepper deployed — and doing them first means such
+         * a deployment refuses the booking outright instead of holding the
+         * branch lock while it finds out. Nothing is persisted yet: if anything
+         * below rolls back, this code was never written and never returned, so
+         * it opens nothing (docs/24-BOOKING-VERIFICATION.md §3).
+         */
+        $code = $this->verification->mint();
+
         /** @var Appointment $appointment */
         $appointment = DB::connection('tenant')->transaction(
-            function () use ($branch, $lines, $windows, $span, $request, $actor, &$customer): Appointment {
+            function () use ($branch, $lines, $windows, $span, $request, $actor, $code, &$customer): Appointment {
                 // The serialisation point. Everything from here to COMMIT sees
                 // a consistent view of this branch's book — including its
                 // resources and its availability blocks.
@@ -161,7 +185,7 @@ final class CreateAppointment
                 $customer = ($this->customers)($request->customer, $actor);
 
                 return $this->persist(
-                    $branch, $customer, $assigned, $windows, $reservations, $span, $request, $actor
+                    $branch, $customer, $assigned, $windows, $reservations, $span, $request, $actor, $code
                 );
             }
         );
@@ -170,7 +194,9 @@ final class CreateAppointment
             $this->record($appointment, $customer, $actor);
         }
 
-        return $appointment;
+        // The one and only time the raw code is readable. Channels that show it
+        // to a customer take it from here; WhatsApp deliberately does not (§12).
+        return new BookingResult($appointment, $code->raw);
     }
 
     /**
@@ -271,6 +297,7 @@ final class CreateAppointment
         TimeWindow $span,
         BookingRequest $request,
         BookingActor $actor,
+        MintedCode $code,
     ): Appointment {
         /** @var Appointment $appointment */
         $appointment = Appointment::query()->create([
@@ -279,6 +306,14 @@ final class CreateAppointment
             'status' => AppointmentStatus::Booked,
             // From the ACTOR, never from the request body (§15).
             'source' => $actor->source,
+            /*
+             * Written WITH the appointment, in the same INSERT, so there is no
+             * instant at which a committed booking exists without its digest —
+             * and no second statement that could fail and leave one behind
+             * (docs/24-BOOKING-VERIFICATION.md §3).
+             */
+            ...$code->columns(),
+            'verification_code_issued_at' => CarbonImmutable::now()->utc(),
             'starts_at' => $span->start,
             'ends_at' => $span->end,
             'booked_timezone' => $branch->timezone,
@@ -287,6 +322,19 @@ final class CreateAppointment
             'created_by_id' => $actor->id,
             'created_by_label' => $actor->label,
         ]);
+
+        /*
+         * The human reference, which needs the primary key and so cannot be
+         * part of the insert above.
+         *
+         * Still inside the caller's transaction, so a booking that fails below
+         * takes its reference with it and no number is consumed. `saveQuietly`
+         * because this is the same write finishing, not a change to an existing
+         * appointment — an `updated` observer firing here would be reacting to
+         * a booking that does not exist yet (docs/24-BOOKING-VERIFICATION.md §1).
+         */
+        $appointment->reference = BookingReference::forId((int) $appointment->getKey());
+        $appointment->saveQuietly();
 
         foreach ($lines as $position => $line) {
             $window = $windows[$position];

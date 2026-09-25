@@ -101,7 +101,7 @@ function jrcBook(array $seed, string $time, array $resources = []): Appointment
             customer: CustomerRef::details('Sara', '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 function jrcStage(Appointment $appointment, User $owner): JourneyStage
@@ -311,7 +311,7 @@ it('still counts another item of the same visit when it genuinely competes', fun
                 customer: CustomerRef::details('Sara Ahmed', '+96475'.random_int(10000000, 99999999)),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         $stage = jrcStage($appointment, $owner);
 

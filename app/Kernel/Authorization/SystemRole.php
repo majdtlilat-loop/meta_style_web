@@ -75,6 +75,8 @@ enum SystemRole: string
                 Permission::ServiceArchive,
                 Permission::MenuView,
                 Permission::MenuManage,
+                Permission::AppearanceView,
+                Permission::AppearanceManage,
                 Permission::MediaUpload,
                 Permission::CustomerView,
                 Permission::CustomerCreate,
@@ -126,6 +128,37 @@ enum SystemRole: string
                 Permission::CashierShiftManage,
                 Permission::CashierShiftSupervise,
                 Permission::ProductManage,
+                // Money in, money out, the merchant accounts and the center's
+                // books: a manager's day (docs/19-PAYMENTS.md §47).
+                Permission::PaymentView,
+                Permission::PaymentCollect,
+                Permission::PaymentRefund,
+                Permission::PaymentGatewayManage,
+                Permission::FinanceView,
+                Permission::ExpenseManage,
+                // The loyalty program, membership plans, package definitions,
+                // points adjustments and cancelling a customer's membership or
+                // package (docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md §20).
+                Permission::LoyaltyView,
+                Permission::LoyaltyManage,
+                Permission::LoyaltyAdjust,
+                Permission::MembershipView,
+                Permission::MembershipManage,
+                Permission::PackageView,
+                Permission::PackageManage,
+
+                // What customers said, and what to do about it. The manager is
+                // who a one-star review is addressed to, and who hides one
+                // (docs/22-REVIEWS.md §19).
+                Permission::ReviewView,
+                Permission::ReviewManage,
+
+                Permission::ReportView,
+                Permission::ReportExport,
+
+                Permission::PlatformSupportView,
+                Permission::PlatformSupportManage,
+
                 Permission::SettingsView,
             ],
 
@@ -189,6 +222,20 @@ enum SystemRole: string
                  */
                 Permission::SaleView,
                 Permission::SaleCreate,
+                /*
+                 * Sees what a customer is entitled to — points, a membership,
+                 * a package — and, while preparing the bill, applies it. Not the
+                 * program's rules, not a manual adjustment
+                 * (docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md §20).
+                 */
+                Permission::LoyaltyView,
+                Permission::MembershipView,
+                Permission::PackageView,
+
+                // Reception reads what customers said. Issuing a fresh review
+                // link mints a capability, and hiding one is a judgement about
+                // a customer's words — both are `review.manage` (§19).
+                Permission::ReviewView,
             ],
 
             // Prices at the till, and enough of a customer to attach a sale
@@ -214,6 +261,23 @@ enum SystemRole: string
                 Permission::SaleFinalize,
                 Permission::InvoicePrint,
                 Permission::CashierShiftManage,
+                /*
+                 * Takes the money — cash, a confirmed transfer, or the branch's
+                 * online gateway — and sees the payments it took. Not refunds,
+                 * not merchant credentials, not the center's books
+                 * (docs/19-PAYMENTS.md §47).
+                 */
+                Permission::PaymentView,
+                Permission::PaymentCollect,
+                /*
+                 * Applies what the customer is entitled to at checkout — redeem
+                 * points, a member's price, a package session. The program and
+                 * any manual adjustment stay a manager's
+                 * (docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md §20).
+                 */
+                Permission::LoyaltyView,
+                Permission::MembershipView,
+                Permission::PackageView,
             ],
 
             // The narrowest role. `customer.view` because an employee has to

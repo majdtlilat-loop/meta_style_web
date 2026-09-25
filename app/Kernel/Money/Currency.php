@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Kernel\Money;
 
+use App\Kernel\Tenancy\Contracts\TenantContext;
+
 /**
  * The currencies Meta Style can express an amount in.
  *
@@ -14,7 +16,8 @@ namespace App\Kernel\Money;
  * (docs/10-API-FOUNDATION.md §9).
  *
  * Only currencies a center can actually be configured with are listed. A
- * catalog of every ISO code would be a list of promises.
+ * catalog of every ISO code would be a list of promises. Which of these are
+ * offered is the platform currency catalog's decision (Super Admin).
  */
 enum Currency: string
 {
@@ -24,6 +27,21 @@ enum Currency: string
     /** US dollar. Widely used alongside IQD in Iraq. */
     case USD = 'USD';
 
+    /*
+     * The region's other trading currencies a center may be set up in. The
+     * Super Admin enables which of these a center can choose (platform
+     * currency catalog); a code not listed here cannot hold a center's money.
+     */
+    case EUR = 'EUR';
+    case GBP = 'GBP';
+    case TRY = 'TRY';
+    case AED = 'AED';
+    case SAR = 'SAR';
+    /** Jordanian dinar. Exponent 3 — 1,000 fils to the dinar. */
+    case JOD = 'JOD';
+    /** Kuwaiti dinar. Exponent 3. */
+    case KWD = 'KWD';
+
     /**
      * Digits after the decimal separator.
      */
@@ -31,7 +49,8 @@ enum Currency: string
     {
         return match ($this) {
             self::IQD => 0,
-            self::USD => 2,
+            self::JOD, self::KWD => 3,
+            default => 2,
         };
     }
 
@@ -50,9 +69,18 @@ enum Currency: string
     {
         $locale ??= app()->getLocale();
 
+        $arabicScript = in_array($locale, ['ar', 'ckb'], true);
+
         return match ($this) {
-            self::IQD => in_array($locale, ['ar', 'ckb'], true) ? 'د.ع' : 'IQD',
+            self::IQD => $arabicScript ? 'د.ع' : 'IQD',
             self::USD => '$',
+            self::EUR => '€',
+            self::GBP => '£',
+            self::TRY => '₺',
+            self::AED => $arabicScript ? 'د.إ' : 'AED',
+            self::SAR => $arabicScript ? 'ر.س' : 'SAR',
+            self::JOD => $arabicScript ? 'د.أ' : 'JOD',
+            self::KWD => $arabicScript ? 'د.ك' : 'KWD',
         };
     }
 
@@ -66,6 +94,15 @@ enum Currency: string
 
     public static function default(): self
     {
+        // Inside a center, that center's own operational currency wins. It is
+        // read from the already-resolved tenant, so this costs no query.
+        if (app()->bound(TenantContext::class)) {
+            $center = app(TenantContext::class)->tenant()?->currency;
+            if (is_string($center) && self::tryFrom($center) instanceof self) {
+                return self::from($center);
+            }
+        }
+
         $configured = config('metastyle.money.default_currency');
 
         return is_string($configured) ? (self::tryFrom($configured) ?? self::IQD) : self::IQD;

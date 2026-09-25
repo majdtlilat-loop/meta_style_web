@@ -5,62 +5,66 @@
     account before the database exists is the one thing this flow must not do
     (docs/02-TENANCY.md §8.2).
 --}}
-<div @if ($status === 'preparing') wire:poll.2s @endif>
-    <h1>{{ __('Setting up your center') }}</h1>
+<div class="auth-flow" @if ($status === 'preparing') wire:poll.2s @endif>
+    <header class="auth-heading">
+        <span class="auth-heading__icon">
+            @switch($status)
+                @case('ready')<x-ui.icon name="check-circle" />@break
+                @case('failed')<x-ui.icon name="alert-triangle" />@break
+                @case('pending_verification')<x-ui.icon name="mail" />@break
+                @default<x-ui.icon name="clock" />
+            @endswitch
+        </span>
+        <p class="eyebrow">{{ __('ui.auth_story.center_eyebrow') }}</p>
+        <h1>{{ __('center_auth.status.title') }}</h1>
+        @if ($notice !== '')<p>{{ $notice }}</p>@endif
+    </header>
 
-    @if ($notice !== '')
-        <p class="sub">{{ $notice }}</p>
-    @endif
-
-    @if ($status === 'preparing')
-        <p class="sub">{{ __('Creating your database and applying the schema. This takes a few seconds.') }}</p>
-        <div class="card">
-            <p>{{ __('Preparing…') }}</p>
+    @if ($status === 'pending_verification')
+        <div class="notice" role="status">
+            <x-ui.icon name="mail" />
+            <div><strong>{{ __('center_auth.status.check_inbox') }}</strong><p>{{ __('center_auth.status.verification_sent') }}</p></div>
+        </div>
+        <x-ui.button variant="secondary" icon="refresh" wire:click="resendVerification" wire:loading.attr="data-loading" wire:target="resendVerification">{{ __('center_auth.actions.resend_verification') }}</x-ui.button>
+    @elseif ($status === 'preparing')
+        <div class="notice" role="status">
+            <span class="spinner" aria-hidden="true"></span>
+            <div><strong>{{ __('center_auth.status.preparing') }}</strong><p>{{ __('center_auth.status.preparing_description') }}</p></div>
         </div>
     @elseif ($status === 'ready')
-        <p class="sub">{{ __('Your center is ready.') }}</p>
-        <div class="card">
-            <label>{{ __('Center key') }}</label>
-            <p><code>{{ $centerKey }}</code></p>
-            <p class="sub" style="margin:.5rem 0 1.25rem">
-                {{ __('You will need this to sign in. Keep it somewhere safe.') }}
-            </p>
-            <a href="{{ route('login') }}" class="btn" wire:navigate>{{ __('Sign in') }}</a>
+        <div class="notice notice--success" role="status">
+            <x-ui.icon name="check-circle" />
+            <div><strong>{{ __('center_auth.status.ready') }}</strong><p><a href="{{ $centerUrl }}" dir="ltr">{{ $centerUrl }}</a></p></div>
         </div>
+        <x-ui.button :href="rtrim((string) $centerUrl, '/').'/login'" icon-after="arrow-right">{{ __('center_auth.actions.sign_in') }}</x-ui.button>
     @elseif ($status === 'failed')
-        <p class="sub">{{ __('Something went wrong while setting up your center.') }}</p>
-        <div class="card">
-            @if ($retryable)
+        <div class="notice notice--danger" role="alert">
+            <x-ui.icon name="alert-triangle" />
+            <div>
+                <strong>{{ __('center_auth.status.failed') }}</strong>
                 {{--
                     Retry resumes; it does not start over. The password is still
-                    the one submitted at registration — it is held, hashed and
-                    encrypted, only for as long as this window stays open
-                    (ADR-031).
+                    the one submitted at registration — held, hashed and encrypted,
+                    only while this window stays open (ADR-031).
                 --}}
-                <p>{{ __('You can pick up where it stopped. Your password and details are unchanged.') }}</p>
-                <p style="margin-top:1rem">
-                    <button type="button" class="btn" wire:click="retry" wire:loading.attr="disabled">
-                        {{ __('Try again') }}
-                    </button>
-                </p>
-            @else
-                <p>{{ __('This registration has expired and can no longer be resumed.') }}</p>
-                <p style="margin-top:1rem">
-                    <a href="{{ route('register') }}" wire:navigate>{{ __('Start over') }}</a>
-                </p>
-            @endif
+                <p>{{ $retryable ? __('center_auth.status.retry_help') : __('center_auth.status.expired') }}</p>
+            </div>
         </div>
+        @if ($retryable)
+            <x-ui.button icon="refresh" wire:click="retry" wire:loading.attr="data-loading" wire:target="retry">{{ __('center_auth.actions.try_again') }}</x-ui.button>
+        @else
+            <x-ui.button variant="secondary" :href="route('register')">{{ __('center_auth.actions.start_over') }}</x-ui.button>
+        @endif
     @elseif ($status === 'cancelled' || $status === 'abandoned')
-        <p class="sub">{{ __('This registration is closed.') }}</p>
-        <div class="card">
-            <p>{{ __('It was not completed in time and can no longer be resumed.') }}</p>
-            <p style="margin-top:1rem">
-                <a href="{{ route('register') }}" wire:navigate>{{ __('Start over') }}</a>
-            </p>
+        <div class="notice notice--warning" role="status">
+            <x-ui.icon name="alert-circle" />
+            <div><strong>{{ __('center_auth.status.closed') }}</strong><p>{{ __('center_auth.status.closed_help') }}</p></div>
         </div>
+        <x-ui.button variant="secondary" :href="route('register')">{{ __('center_auth.actions.start_over') }}</x-ui.button>
     @else
-        <div class="card">
-            <p>{{ __('We could not find that registration.') }}</p>
+        <div class="notice notice--warning" role="status">
+            <x-ui.icon name="alert-circle" />
+            <p>{{ __('center_auth.status.not_found') }}</p>
         </div>
     @endif
 </div>

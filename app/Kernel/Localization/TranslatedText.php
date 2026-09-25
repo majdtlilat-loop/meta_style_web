@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Kernel\Localization;
 
+use App\Kernel\Tenancy\Contracts\TenantContext;
 use Stringable;
 
 /**
@@ -44,10 +45,14 @@ final readonly class TranslatedText implements Stringable
     /**
      * Resolves the best available string.
      *
-     * Falls through requested locale → current application locale → platform
-     * fallback → any translation that exists. A translatable field must never
-     * render empty when *some* translation exists: a blank service name in a
-     * menu is worse than the wrong language (docs/07-LOCALIZATION.md §5.1).
+     * Falls through requested locale → center default → application locale →
+     * platform fallback → any translation that exists (docs/07-LOCALIZATION.md
+     * §5.1). With no locale asked for, the request's own language is the
+     * requested one as long as the center publishes in it — an English-speaking
+     * manager reads English names — while a translation left behind in a
+     * language the center switched off never outranks its default. A
+     * translatable field must never render empty when *some* translation
+     * exists: a blank service name in a menu is worse than the wrong language.
      */
     public function get(?string $locale = null): string
     {
@@ -105,10 +110,22 @@ final readonly class TranslatedText implements Stringable
     private function candidates(?string $locale): array
     {
         $fallback = config('localization.fallback');
+        $appLocale = app()->getLocale();
+        $centerPrimary = null;
+        $requested = $locale;
+
+        if (app()->bound(TenantLocales::class)
+            && app()->bound(TenantContext::class)
+            && app(TenantContext::class)->isBound()) {
+            $centerLocales = app(TenantLocales::class);
+            $centerPrimary = $centerLocales->default();
+            $requested ??= in_array($appLocale, $centerLocales->enabled(), true) ? $appLocale : null;
+        }
 
         return array_values(array_unique(array_filter([
-            $locale,
-            app()->getLocale(),
+            $requested,
+            $centerPrimary,
+            $appLocale,
             is_string($fallback) ? $fallback : 'en',
         ])));
     }

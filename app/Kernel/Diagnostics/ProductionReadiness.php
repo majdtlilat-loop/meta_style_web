@@ -6,6 +6,8 @@ namespace App\Kernel\Diagnostics;
 
 use App\Kernel\Http\MiddlewareOrderGuard;
 use App\Kernel\Http\MiddlewareOrderViolation;
+use App\Kernel\Security\Keyring;
+use App\Kernel\Tenancy\PlatformHosts;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Routing\Router;
@@ -45,11 +47,26 @@ final class ProductionReadiness
      */
     private const TAGGABLE_DRIVERS = ['redis', 'memcached', 'array', 'dynamodb'];
 
+    /**
+     * Keyed peppers every deployment must carry, and what each one protects.
+     *
+     * Named here rather than discovered from config, so a key that is MISSING
+     * from the environment is still checked. Iterating `security.keys` would
+     * report nothing at all for the one deployment that most needs telling.
+     *
+     * @var array<string, string>
+     */
+    private const REQUIRED_KEYS = [
+        'booking_verification' => 'booking verification codes could not be issued or checked',
+    ];
+
     public function __construct(
         private readonly Repository $config,
         private readonly Application $app,
         private readonly Router $router,
         private readonly MiddlewareOrderGuard $middlewareOrder,
+        private readonly Keyring $keyring,
+        private readonly PlatformHosts $hosts,
     ) {}
 
     /**
@@ -60,7 +77,7 @@ final class ProductionReadiness
     {
         $production = $productionRules ?? $this->app->isProduction();
 
-        return [
+        $checks = [
             $this->middlewareOrdering(),
             $this->rateLimitBackend($production),
             $this->cacheTags($production),
@@ -68,7 +85,17 @@ final class ProductionReadiness
             $this->sessionDriver($production),
             $this->debugMode($production),
             $this->applicationKey(),
+            $this->domainArchitecture($production),
+            $this->wildcardCoverage($production),
+            $this->reportingConnection(),
+            $this->publicMediaLink($production),
         ];
+
+        foreach (self::REQUIRED_KEYS as $name => $consequence) {
+            $checks[] = $this->verificationKey($name, $consequence, $production);
+        }
+
+        return $checks;
     }
 
     /**
@@ -245,6 +272,25 @@ final class ProductionReadiness
         return ReadinessCheck::ok('debug mode', $debug ? 'on (non-production)' : 'off');
     }
 
+    /**
+     * Landing-page media is uploaded to the public disk and served from
+     * /storage. Without the link every CMS image and video 404s on the
+     * corporate site, silently.
+     */
+    private function publicMediaLink(bool $production): ReadinessCheck
+    {
+        $link = $this->app->publicPath('storage');
+        if (is_dir($link)) {
+            return ReadinessCheck::ok('public media link', 'public/storage serves uploaded landing-page media');
+        }
+
+        $detail = 'public/storage does not exist, so landing-page images and videos cannot be served.';
+
+        return $production
+            ? ReadinessCheck::failure('public media link', $detail, 'Run php artisan storage:link.')
+            : ReadinessCheck::warning('public media link', $detail, 'Run php artisan storage:link.');
+    }
+
     private function applicationKey(): ReadinessCheck
     {
         $key = $this->config->get('app.key');
@@ -259,6 +305,157 @@ final class ProductionReadiness
         }
 
         return ReadinessCheck::ok('application key', 'set');
+    }
+
+    /**
+     * A reporting replica is optional until the paid product is activated,
+     * but its absence must be visible before somebody sells that product.
+     */
+    private function domainArchitecture(bool $production): ReadinessCheck
+    {
+        try {
+            $base = $this->hosts->baseDomain();
+            $corporate = $this->hosts->corporateHost();
+            $superadmin = $this->hosts->superAdminHost();
+            $scheme = $this->hosts->scheme();
+        } catch (\RuntimeException $exception) {
+            return ReadinessCheck::failure(
+                'platform domains',
+                $exception->getMessage(),
+                'Set APP_URL to an http(s) origin containing only scheme, hostname and optional port.',
+            );
+        }
+
+        $central = $this->config->get('tenancy.central_domains', []);
+        if ($corporate !== $base
+            || $superadmin !== 'superadmin.'.$base
+            || ! is_array($central)
+            || ! in_array($corporate, $central, true)
+            || ! in_array($superadmin, $central, true)) {
+            return ReadinessCheck::failure(
+                'platform domains',
+                'routing and tenancy do not share the APP_URL-derived host model',
+                'Use PlatformHosts for corporate, Super Admin and center host configuration.',
+            );
+        }
+
+        if ($production && $scheme !== 'https') {
+            return ReadinessCheck::failure('platform domains', 'production URL generation is not HTTPS', 'Set APP_URL to the production HTTPS origin.');
+        }
+
+        return ReadinessCheck::ok('platform domains', $this->hosts->corporateUrl().' with superadmin and wildcard center subdomains');
+    }
+
+    private function wildcardCoverage(bool $production): ReadinessCheck
+    {
+        $dns = (bool) $this->config->get('metastyle.domains.wildcard_dns_ready', false);
+        $tls = (bool) $this->config->get('metastyle.domains.wildcard_tls_ready', false);
+
+        if ($dns && $tls) {
+            return ReadinessCheck::ok('wildcard DNS and TLS', 'both are declared ready for center subdomains');
+        }
+
+        $missing = implode(' and ', array_filter([$dns ? null : 'DNS', $tls ? null : 'TLS']));
+        $detail = 'wildcard '.$missing.' readiness is not confirmed; center subdomains cannot be activated honestly';
+        $remedy = 'Configure and verify *.'.$this->hosts->baseDomain().' DNS/TLS, then set METASTYLE_WILDCARD_DNS_READY and METASTYLE_WILDCARD_TLS_READY true.';
+
+        return $production
+            ? ReadinessCheck::failure('wildcard DNS and TLS', $detail, $remedy)
+            : ReadinessCheck::warning('wildcard DNS and TLS', $detail, $remedy);
+    }
+
+    private function reportingConnection(): ReadinessCheck
+    {
+        $host = $this->config->get('database.connections.reporting_template.host');
+        $username = $this->config->get('database.connections.reporting_template.username');
+        $configured = is_string($host) && trim($host) !== ''
+            && is_string($username) && trim($username) !== '';
+
+        if ($configured) {
+            return ReadinessCheck::ok('advanced reports connection', 'reporting endpoint credentials are configured');
+        }
+
+        $detail = 'reporting endpoint credentials are missing; Standard Reports remain available, but Advanced Reports cannot be enabled';
+        $remedy = 'Set DB_REPORTING_HOST and DB_REPORTING_USERNAME (plus the matching secret and TLS settings).';
+
+        return (bool) $this->config->get('reports.advanced_enabled', false)
+            ? ReadinessCheck::failure('advanced reports connection', $detail, $remedy)
+            : ReadinessCheck::warning('advanced reports connection', $detail, $remedy);
+    }
+
+    /**
+     * One keyed pepper: is there an active version, and is its key real?
+     *
+     * FAILS CLOSED on every branch (docs/24-BOOKING-VERIFICATION.md §7). The
+     * failure this guards against writes no error at runtime — codes are issued
+     * happily against a missing key only to refuse verification later, or are
+     * issued under a weak one that nothing reports. Neither surfaces until a
+     * customer is at a counter unable to prove a booking.
+     *
+     * Outside production it is a WARNING: a developer machine has no pepper and
+     * does not need one, and failing there would make `metastyle:doctor`
+     * something everybody learns to ignore.
+     */
+    private function verificationKey(string $name, string $consequence, bool $production): ReadinessCheck
+    {
+        $label = str_replace('_', ' ', $name).' key';
+        $described = $this->keyring->describe($name);
+        $minimum = $this->minimumKeyBytes();
+
+        $refuse = fn (string $detail): ReadinessCheck => $production
+            ? ReadinessCheck::failure($label, $detail.', so '.$consequence.'.', $this->keyRemedy($name))
+            : ReadinessCheck::warning($label, $detail.' (not required outside production)', $this->keyRemedy($name));
+
+        $active = $described['active'];
+
+        if ($active === null) {
+            return $refuse('no active version is configured');
+        }
+
+        if (! array_key_exists($active, $described['versions'])) {
+            return $refuse(sprintf('the active version "%s" has no key material', $active));
+        }
+
+        /*
+         * EVERY configured version, not only the active one. A retired key that
+         * has been blanked rather than removed stops verifying the codes still
+         * relying on it, and the row that names it fails closed — the exact
+         * outage this check exists to catch before it happens.
+         */
+        foreach ($described['versions'] as $version => $bytes) {
+            if ($bytes < $minimum) {
+                return $refuse(sprintf(
+                    'version "%s" is %d byte(s); at least %d are required',
+                    $version,
+                    $bytes,
+                    $minimum,
+                ));
+            }
+        }
+
+        return ReadinessCheck::ok($label, sprintf(
+            'active version "%s", %d version(s) configured',
+            $active,
+            count($described['versions']),
+        ));
+    }
+
+    private function keyRemedy(string $name): string
+    {
+        $prefix = mb_strtoupper($name);
+
+        return sprintf(
+            'Set %s_ACTIVE_KEY and %s_KEY_<VERSION> to "base64:" plus 32 random bytes.',
+            $prefix,
+            $prefix,
+        );
+    }
+
+    private function minimumKeyBytes(): int
+    {
+        $minimum = $this->config->get('security.minimum_key_bytes', 32);
+
+        return is_numeric($minimum) ? (int) $minimum : 32;
     }
 
     /**

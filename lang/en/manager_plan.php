@@ -1,0 +1,68 @@
+<?php
+
+declare(strict_types=1);
+
+return [
+    'title' => 'Plan & billing',
+    'not_allowed' => 'You do not have permission to view the center’s plan.',
+    'empty' => [
+        'title' => 'No subscription yet',
+        'description' => 'Contact Meta Style to set up your plan.',
+    ],
+    'actions' => [
+        'contact' => 'Contact Meta Style',
+    ],
+    'summary' => [
+        'current' => 'Current plan',
+        'free' => 'Free',
+        'read_only' => 'The Manager is read-only until your subscription is reactivated. Your data is kept.',
+        'trial_ends' => 'Trial ends',
+        'days_left' => '{0} Ends today|{1} 1 day left|[2,*] :count days left',
+        'renews' => 'Renews on',
+        'grace_ends' => 'Grace period ends',
+        'period_ended' => 'Period ended',
+        'scheduled' => 'Scheduled change',
+        'scheduled_to' => 'Moves to :plan',
+        'scheduled_to_on' => 'Moves to :plan on :date',
+    ],
+    'allowances' => [
+        'title' => 'Allowances',
+        'view_usage' => 'View usage',
+        'none' => 'No limited allowances.',
+        'source_plan' => 'From your plan',
+        'source_override' => 'Set for your center',
+        'source_default' => 'Standard allowance',
+    ],
+    'features' => [
+        'title' => 'Included features',
+        'none' => 'No features are enabled yet.',
+        'added' => 'Added',
+        'added_hint' => 'Enabled for your center in addition to your plan',
+        'other' => 'Other',
+    ],
+    'compare' => [
+        'title' => 'Compare plans',
+        'cycle' => 'Billing cycle',
+        'monthly' => 'Monthly',
+        'yearly' => 'Yearly',
+        'feature' => 'Feature',
+        'current' => 'Current',
+        'recommended' => 'Recommended',
+        'not_offered' => 'Not offered on this cycle',
+        'per_month' => '/ month',
+        'per_year' => '/ year',
+        'save' => 'Save :percent%',
+        'included' => 'Included',
+        'not_included' => 'Not included',
+        'allowances' => 'Allowances',
+        'actions' => 'Actions',
+        'your_plan' => 'Your plan',
+        'request' => 'Ask to switch',
+        'request_subject' => 'Plan change request: :plan',
+        'none' => 'No public plans are available right now.',
+        'note' => 'Plan changes are made by Meta Style. Ask to switch and the team will reply in Support.',
+        'focus_owned' => ':feature is already included for your center.',
+        'focus_offered' => ':feature is highlighted below — see which plans include it.',
+        'focus_contact' => 'No public plan includes :feature yet. Contact Meta Style to enable it for your center.',
+    ],
+];

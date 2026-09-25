@@ -20,7 +20,18 @@ use Illuminate\Support\Str;
  * @property int $id
  * @property string $code
  * @property TranslatedText $name
+ * @property TranslatedText|null $description
  * @property int|null $trial_days
+ * @property string $uuid
+ * @property int $price_minor
+ * @property int|null $monthly_price_minor
+ * @property int|null $yearly_price_minor
+ * @property string $currency
+ * @property string $billing_period
+ * @property bool $is_public
+ * @property bool $is_active
+ * @property bool $is_featured
+ * @property int $sort_order
  */
 final class Plan extends Model
 {
@@ -39,6 +50,10 @@ final class Plan extends Model
             'name' => Translatable::class,
             'description' => Translatable::class,
             'price_minor' => 'integer',
+            'monthly_price_minor' => 'integer',
+            'yearly_price_minor' => 'integer',
+            'is_featured' => 'boolean',
+            'sort_order' => 'integer',
             'trial_days' => 'integer',
             'is_public' => 'boolean',
             'is_active' => 'boolean',
@@ -50,6 +65,60 @@ final class Plan extends Model
         self::creating(function (self $plan): void {
             $plan->uuid ??= (string) Str::uuid();
         });
+    }
+
+    public const CYCLES = ['monthly', 'yearly'];
+
+    /**
+     * The commercial price for one billing cycle, in minor units of the
+     * plan's currency — null when the plan is not sold on that cycle.
+     *
+     * Plans that predate per-cycle pricing only have their primary price.
+     */
+    public function priceFor(string $cycle): ?int
+    {
+        $price = match ($cycle) {
+            'monthly' => $this->monthly_price_minor,
+            'yearly' => $this->yearly_price_minor,
+            default => null,
+        };
+
+        if ($price === null && $this->billing_period === $cycle) {
+            return $this->price_minor;
+        }
+
+        return $price;
+    }
+
+    /** @return list<string> */
+    public function cycles(): array
+    {
+        return array_values(array_filter(self::CYCLES, fn (string $cycle): bool => $this->priceFor($cycle) !== null));
+    }
+
+    public function offers(string $cycle): bool
+    {
+        return $this->priceFor($cycle) !== null;
+    }
+
+    /**
+     * How much a year costs on the yearly price compared with twelve
+     * monthly payments, in whole percent — null unless it is a real saving.
+     */
+    public function yearlySavingPercent(): ?int
+    {
+        $monthly = $this->priceFor('monthly');
+        $yearly = $this->priceFor('yearly');
+        if ($monthly === null || $yearly === null || $monthly <= 0) {
+            return null;
+        }
+        $full = $monthly * 12;
+        if ($yearly >= $full) {
+            return null;
+        }
+        $percent = intdiv(($full - $yearly) * 100, $full);
+
+        return $percent > 0 ? $percent : null;
     }
 
     /**

@@ -14,5 +14,10 @@ final readonly class AdjustmentInput
         public ?int $basisPoints,
         /** Only for fixed adjustments: the amount entered, in minor units. */
         public int $amountMinor,
+        /**
+         * The index of the one line a discount belongs to, or null for a
+         * sale-level adjustment. Only a fixed discount may target a line.
+         */
+        public ?int $targetLine = null,
     ) {}
 }

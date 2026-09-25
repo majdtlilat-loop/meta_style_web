@@ -7,6 +7,7 @@ use App\Kernel\Entitlements\Exceptions\EntitlementRequired;
 use App\Kernel\SaaS\Enums\OverrideMode;
 use App\Kernel\SaaS\Models\TenantEntitlementOverride;
 use App\Kernel\Tenancy\Contracts\TenantContext;
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Modules\Queue\Application\Actions\CallTicket;
 use App\Modules\Queue\Application\Actions\CreateWalkInTicket;
 use App\Modules\Queue\Application\Actions\IssueTicket;
@@ -133,7 +134,10 @@ it('serves no screen until the center buys queue_display', function (): void {
         return $this->seedDisplay($seed['branch']);
     });
 
-    $url = '/api/v1/queue/'.$center['tenant']->publicKey.'/displays/'.$display->public_key;
+    // The feed lives on the center's own host since Phase 15; the public slug
+    // in the path must agree with it (ResolvePublicTenant).
+    $slug = (string) $center['registration']->requested_slug;
+    $url = app(PlatformHosts::class)->centerUrl($slug, '/api/v1/queue/'.$slug.'/displays/'.$display->public_key);
 
     $this->getJson($url)->assertStatus(403);
 
@@ -167,7 +171,10 @@ it('speaks nothing until the center buys queue_voice', function (): void {
         return $screen;
     });
 
-    $url = '/api/v1/queue/'.$center['tenant']->publicKey.'/displays/'.$display->public_key;
+    // The feed lives on the center's own host since Phase 15; the public slug
+    // in the path must agree with it (ResolvePublicTenant).
+    $slug = (string) $center['registration']->requested_slug;
+    $url = app(PlatformHosts::class)->centerUrl($slug, '/api/v1/queue/'.$slug.'/displays/'.$display->public_key);
 
     // The screen still shows the call — it just does not say it. The visual
     // product and the spoken one are sold separately, and the payload says so

@@ -13,6 +13,7 @@ use App\Modules\Booking\Domain\Models\Appointment;
 use App\Modules\ServiceJourney\Domain\Enums\StageStatus;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
 
 /*
@@ -42,7 +43,7 @@ function svBook(array $seed): Appointment
             customer: CustomerRef::details('Sara Ahmed', '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 it('exposes no public or customer journey route', function (): void {
@@ -206,9 +207,11 @@ it('renders the resource screen', function (): void {
 
         $this->actingAs($this->ownerWithCatalogAccess(), 'web');
 
+        // The page is titled from the Manager navigation ("Rooms & equipment"
+        // since the Manager build); assert the translated title, not a word.
         Livewire::test(Resources::class)
             ->assertOk()
-            ->assertSee('Resources');
+            ->assertSee(__('ui.manager_nav.items.resources'));
     });
 });
 
@@ -234,7 +237,11 @@ it('renders the operational board', function (): void {
 it('checks a customer in from the board', function (): void {
     $center = $this->registerCenter();
 
-    $this->asCenter($center['tenant'], function (): void {
+    $this->asCenter($center['tenant'], function () use ($center): void {
+        // The host normally supplies {center}; an in-process component has
+        // none, and the checked-in card now links to the till on that host.
+        URL::defaults(['center' => $center['registration']->requested_slug]);
+
         $seed = $this->seedBookableCenter();
         $appointment = svBook($seed);
 

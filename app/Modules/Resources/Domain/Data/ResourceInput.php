@@ -49,7 +49,7 @@ final readonly class ResourceInput
 
         if ($capacity < 1 || $capacity > self::MAX_CAPACITY) {
             throw ValidationException::withMessages([
-                'capacity' => 'Capacity must be between 1 and '.self::MAX_CAPACITY.'.',
+                'capacity' => __('manager_staff.errors.capacity', ['max' => self::MAX_CAPACITY]),
             ]);
         }
 
@@ -57,7 +57,7 @@ final readonly class ResourceInput
         $name = is_array($data['name'] ?? null) ? $data['name'] : [];
 
         if ($name === []) {
-            throw ValidationException::withMessages(['name' => 'A resource needs a name.']);
+            throw ValidationException::withMessages(['name' => __('manager_staff.errors.name_required')]);
         }
 
         return new self(

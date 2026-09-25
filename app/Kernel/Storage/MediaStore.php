@@ -6,8 +6,13 @@ namespace App\Kernel\Storage;
 
 use App\Kernel\Tenancy\Contracts\TenantContext;
 use Illuminate\Contracts\Filesystem\Filesystem;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use League\Flysystem\Local\LocalFilesystemAdapter;
+use LogicException;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * The only way Meta Style touches tenant files.
@@ -75,6 +80,31 @@ final class MediaStore
     public function absolutePath(MediaCollection $collection, string $path): string
     {
         return Storage::disk($collection->disk())->path($path);
+    }
+
+    /**
+     * A response serving one stored file, inline, with the caller's headers.
+     *
+     * On a local disk it is a FILE response, which answers byte ranges
+     * (206 Partial Content) — Safari and WebKit will not play a <video>
+     * without them. Any other driver is streamed, as before. The driver is
+     * decided here and nowhere else (docs/09-STORAGE.md §10).
+     *
+     * @param  array<string, string>  $headers
+     */
+    public function response(MediaCollection $collection, string $path, array $headers): Response
+    {
+        $disk = $this->disk($collection);
+
+        if (! $disk instanceof FilesystemAdapter) {
+            throw new LogicException('Media is served from a Laravel filesystem disk.');
+        }
+
+        if ($disk->getAdapter() instanceof LocalFilesystemAdapter) {
+            return new BinaryFileResponse($disk->path($path), 200, $headers, true, null, false, false);
+        }
+
+        return $disk->response($path, null, $headers, 'inline');
     }
 
     /**

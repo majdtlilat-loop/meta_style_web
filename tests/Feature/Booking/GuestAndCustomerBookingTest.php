@@ -48,7 +48,7 @@ function guestBooking(array $seed, string $name, string $phone, string $at = '10
             customer: CustomerRef::details($name, $phone),
         ),
         BookingActor::guest(),
-    );
+    )->appointment;
 }
 
 function grantBooking(string $tenantId, bool $granted = true): void
@@ -217,7 +217,7 @@ it('books a signed-in customer against their own linked record', function (): vo
                 customer: CustomerRef::self(),
             ),
             BookingActor::customer($account, $customer->name),
-        );
+        )->appointment;
 
         expect($appointment->customer_id)->toBe($customer->id)
             ->and($appointment->source)->toBe(BookingSource::CustomerAccount)
@@ -250,7 +250,7 @@ it('cannot be told to book for a different customer', function (): void {
                 customer: CustomerRef::existing($theirs->uuid),
             ),
             BookingActor::customer($account, $mine->name),
-        ))->toThrow(BookingFailed::class);
+        )->appointment)->toThrow(BookingFailed::class);
 
         expect(Appointment::query()->count())->toBe(0);
     });
@@ -276,7 +276,7 @@ it('lets a customer cancel their own booking and nobody else\'s', function (): v
                 customer: CustomerRef::self(),
             ),
             BookingActor::customer($account, $mine->name),
-        );
+        )->appointment;
 
         $otherAppointment = app(BookingEngine::class)->book(
             new BookingRequest(
@@ -286,7 +286,7 @@ it('lets a customer cancel their own booking and nobody else\'s', function (): v
                 customer: CustomerRef::existing($theirs->uuid),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         app(BookingEngine::class)->cancel($ownAppointment, BookingActor::customer($account, $mine->name));
 
@@ -319,7 +319,7 @@ it('refuses a customer trying to confirm or complete their own booking', functio
                 customer: CustomerRef::self(),
             ),
             BookingActor::customer($account, $customer->name),
-        );
+        )->appointment;
 
         // Cancelling is the only transition a customer may make. Confirming on
         // their own behalf would make "confirmed" meaningless, and completing
@@ -355,7 +355,7 @@ it('refuses a customer cancelling a booking that has already started', function 
                 customer: CustomerRef::self(),
             ),
             BookingActor::customer($account, $customer->name),
-        );
+        )->appointment;
 
         $appointment->forceFill(['starts_at' => CarbonImmutable::now()->subMinutes(10)])->save();
 

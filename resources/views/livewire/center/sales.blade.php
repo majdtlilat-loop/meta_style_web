@@ -1,175 +1,143 @@
 {{--
-    A branch's sales for a day, and the invoice behind each.
+    A branch's sales history, and the invoice behind each.
 
-    docs/18-SALES.md §45. Not a finance report: no revenue breakdown, no payment
-    method. The list a manager opens to find a sale, share its invoice or void it.
+    docs/18-SALES.md §45. Not a finance report: no revenue, no margin. The list a
+    manager opens to find a sale, share its invoice or void it. Every label,
+    time and figure arrives ready from the component and the presenters.
 --}}
-<div>
-    <x-center-nav />
+<div class="stack pos-page">
+    <x-ui.page-header :title="__('Sales')">
+        @if($canSell)
+            <x-slot:actions>
+                <a class="button" href="{{ route('center.pos') }}" wire:navigate><x-ui.icon name="pos" size="16" />{{ __('New sale') }}</a>
+            </x-slot:actions>
+        @endif
+    </x-ui.page-header>
 
-    <h1>{{ __('Sales') }}</h1>
-
-    @if ($error !== '')
-        <p role="alert" class="error">{{ $error }}</p>
-    @endif
-
-    @if ($saved !== '')
-        <p role="status">{{ $saved }}</p>
-    @endif
+    @include('livewire.center.finance.tabs')
 
     {{-- Issued sales stay readable after a downgrade; new ones need the POS. --}}
-    @unless ($hasPos)
-        <p role="note" class="notice">{{ __('Point of sale is not included for this center. Past sales and invoices remain available to read.') }}</p>
-    @endunless
+    @if(! $hasPos && $offer !== null)
+        <x-manager.feature-locked :offer="$offer" compact history />
+    @endif
 
-    <form onsubmit="return false" class="filters">
-        <label>
-            {{ __('Branch') }}
-            <select wire:model.live="branch">
-                @foreach ($branches as $option)
-                    <option value="{{ $option->uuid }}">{{ $option->name }}</option>
-                @endforeach
-            </select>
-        </label>
+    @if($error !== '' && $open === '')<div class="notice" data-tone="danger" role="alert"><x-ui.icon name="alert-circle" /><p>{{ $error }}</p></div>@endif
+    @if($saved !== '' && $open === '')<div class="notice" data-tone="success" role="status"><x-ui.icon name="check-circle" /><p>{{ $saved }}</p></div>@endif
 
-        <label>
-            {{ __('Date') }}
-            <input type="date" wire:model.live="date">
-        </label>
-
-        <label>
-            {{ __('Status') }}
-            <select wire:model.live="status">
+    <form class="filter-bar pos-filters" role="search" x-on:submit.prevent aria-label="{{ __('ui.actions.filters') }}">
+        @if(count($branches) > 1)
+            <div class="field">
+                <label for="sales-branch">{{ __('Branch') }}</label>
+                <select id="sales-branch" wire:model.live="branch">
+                    @foreach($branches as $option)
+                        <option value="{{ $option['uuid'] }}">{{ $option['name'] }}</option>
+                    @endforeach
+                </select>
+            </div>
+        @endif
+        <div class="field filter-bar__search">
+            <label for="sales-search">{{ __('ui.actions.search') }}</label>
+            <div class="search-input">
+                <x-ui.icon name="search" />
+                <input id="sales-search" type="search" wire:model.live.debounce.400ms="term" placeholder="{{ __('manager_pos.history.search') }}" autocomplete="off">
+            </div>
+        </div>
+        <div class="field">
+            <label for="sales-status">{{ __('Status') }}</label>
+            <select id="sales-status" wire:model.live="status">
                 <option value="">{{ __('Issued and voided') }}</option>
                 <option value="finalized">{{ __('Issued') }}</option>
                 <option value="voided">{{ __('Voided') }}</option>
                 <option value="draft">{{ __('Open drafts') }}</option>
             </select>
-        </label>
+        </div>
+        @if($cashiers !== [])
+            <div class="field">
+                <label for="sales-cashier">{{ __('manager_pos.history.cashier') }}</label>
+                <select id="sales-cashier" wire:model.live="cashier">
+                    <option value="">{{ __('manager_pos.history.all_cashiers') }}</option>
+                    @foreach($cashiers as $option)
+                        <option value="{{ $option['id'] }}">{{ $option['name'] }}</option>
+                    @endforeach
+                </select>
+            </div>
+        @endif
+        @if($hasFilters)
+            <div class="filter-bar__actions">
+                <button class="button button--ghost button--sm" type="button" wire:click="clearFilters"><x-ui.icon name="close" size="16" />{{ __('ui.actions.clear_filters') }}</button>
+            </div>
+        @endif
     </form>
 
-    <table>
-        <thead>
-            <tr>
-                <th scope="col">{{ __('Invoice') }}</th>
-                <th scope="col">{{ __('Customer') }}</th>
-                <th scope="col">{{ __('Status') }}</th>
-                <th scope="col">{{ __('Total') }}</th>
-                <th scope="col"></th>
-            </tr>
-        </thead>
-        <tbody>
-            @forelse ($sales as $row)
-                <tr wire:key="sale-{{ $row['uuid'] }}">
-                    <td>{{ $row['invoice']['number'] ?? '—' }}</td>
-                    <td>{{ $row['customer']['name'] ?? __('Walk-up customer') }}</td>
-                    <td>{{ __($row['status']) }}</td>
-                    <td>{{ $row['grand_total']['formatted'] }}</td>
-                    <td>
-                        <button type="button" wire:click="show('{{ $row['uuid'] }}')">{{ __('Details') }}</button>
-                        @if ($row['status'] === 'draft' && $hasPos)
-                            <a href="{{ route('center.pos', ['sale' => $row['uuid']]) }}" wire:navigate>{{ __('Open at till') }}</a>
-                        @endif
-                    </td>
-                </tr>
-            @empty
-                <tr><td colspan="5">{{ __('No sales.') }}</td></tr>
-            @endforelse
-        </tbody>
-    </table>
+    @include('livewire.center.finance.window')
 
-    @if ($detail !== null)
-        <section class="detail">
-            <h2>{{ $detail['invoice']['number'] ?? __('Draft sale') }}</h2>
-
-            <ul>
-                @foreach ($detail['lines'] as $line)
-                    <li>
-                        {{ $line['quantity'] }} × {{ $line['name'] }}
-                        @if ($line['variation'] !== null) — {{ $line['variation'] }} @endif
-                        · {{ $line['line_subtotal']['formatted'] }}
-                        @if ($line['overridden'])
-                            <small>{{ __('Price changed by :name: :reason', ['name' => $line['overridden_by'], 'reason' => $line['override_reason']]) }}</small>
-                        @endif
-                    </li>
-                @endforeach
-            </ul>
-
-            <p><strong>{{ __('Total') }}:</strong> {{ $detail['grand_total']['formatted'] }}</p>
-
-            @if ($detail['status'] === 'voided')
-                <p>{{ __('Voided by :name: :reason', ['name' => $detail['voided_by'], 'reason' => $detail['void_reason']]) }}</p>
-            @endif
-
-            @if ($detail['invoice'] !== null)
-                {{-- Shown once: only a digest of the link is kept, so it cannot be looked up again. --}}
-                @if ($customerLink !== '')
-                    <p><a href="{{ $customerLink }}" target="_blank" rel="noopener noreferrer">{{ __('Customer link') }}</a></p>
-                @endif
-
-                @if ($canReissueLink)
-                    @if ($detail['invoice']['share_link_active'])
-                        <button type="button" wire:click="rotateLink" wire:confirm="{{ __('The current customer link will stop working. Continue?') }}">
-                            {{ __('Issue a new customer link') }}
-                        </button>
-                    @else
-                        <button type="button" wire:click="rotateLink">{{ __('Issue a customer link') }}</button>
-                    @endif
-                @endif
-
-                @if ($canPrint)
-                    <a href="{{ route('center.sales.invoice.print', ['uuid' => $detail['invoice']['uuid'], 'format' => '80mm']) }}" target="_blank">{{ __('Print receipt (80mm)') }}</a>
-                    <a href="{{ route('center.sales.invoice.print', ['uuid' => $detail['invoice']['uuid'], 'format' => 'a4']) }}" target="_blank">{{ __('Print A4') }}</a>
-                @endif
-            @endif
-
-            @if ($detail['status'] === 'finalized' && $canVoid)
-                <form wire:submit="void" class="void">
-                    <input type="text" wire:model="voidReason" placeholder="{{ __('Reason for voiding') }}" maxlength="190" required>
-                    <button type="submit" wire:confirm="{{ __('Void this sale? Its invoice is kept and marked void.') }}">{{ __('Void sale') }}</button>
-                </form>
-            @endif
-        </section>
+    @if($listError !== '')
+        <div class="notice" data-tone="danger" role="alert"><x-ui.icon name="alert-circle" /><p>{{ $listError }}</p></div>
     @endif
 
-    {{-- Branch configuration: the start of this branch's invoice numbers.
-         Applies to invoices issued from now on (docs/18-SALES.md §17). --}}
-    @if ($canSetPrefix && $branch !== '')
-        <section class="invoice-prefix">
-            <h2>{{ __('Invoice numbering') }}</h2>
-            <p>{{ __('Current prefix: :prefix', ['prefix' => $currentPrefix ?? __('none (the main branch uses INV)')]) }}</p>
-            <form wire:submit="setInvoicePrefix">
-                <input type="text" wire:model="invoicePrefix" maxlength="4" placeholder="{{ __('e.g. BG') }}">
-                <button type="submit">{{ __('Save prefix') }}</button>
-            </form>
-        </section>
+    @if($totals !== [] && $status !== 'draft')
+        <div class="pos-strip" wire:loading.class="is-refreshing">
+            @foreach($totals as $total)
+                <div class="pos-strip__item" @if($total['tone']) data-tone="{{ $total['tone'] }}" @endif>
+                    <span class="pos-strip__label">{{ $total['label'] }}</span>
+                    <strong class="tabular" dir="ltr">{{ $total['amount'] }}</strong>
+                    <span class="cell-sub">{{ trans_choice('manager_pos.history.sales_count', $total['count'], ['count' => $total['count']]) }}</span>
+                </div>
+            @endforeach
+        </div>
     @endif
 
-    {{-- The small product catalog the till sells from. No stock (§8). --}}
-    @if ($canManageProducts)
-        <section class="products">
-            <h2>{{ __('Products') }}</h2>
+    <div class="table-shell table-shell--stack" wire:loading.class="is-refreshing" wire:target="branch,status,term,cashier,setRange,from,until,gotoPage,nextPage,previousPage,clearFilters">
+        @if($sales === [])
+            <x-ui.empty-state :icon="$hasFilters ? 'filter' : 'sales'" :title="$hasFilters ? __('manager_pos.history.no_match') : __('No sales.')">
+                @if($hasFilters)
+                    <button class="button button--secondary button--sm" type="button" wire:click="clearFilters">{{ __('ui.actions.clear_filters') }}</button>
+                @elseif($canSell)
+                    <a class="button button--sm" href="{{ route('center.pos') }}" wire:navigate>{{ __('New sale') }}</a>
+                @endif
+            </x-ui.empty-state>
+        @else
+            <table>
+                <caption class="sr-only">{{ __('Sales') }}</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">{{ __('Invoice') }}</th>
+                        <th scope="col">{{ __('Customer') }}</th>
+                        <th scope="col">{{ __('manager_pos.history.cashier') }}</th>
+                        <th scope="col">{{ __('Status') }}</th>
+                        <th scope="col" class="numeric">{{ __('Total') }}</th>
+                        <th scope="col" class="actions"><span class="sr-only">{{ __('ui.table.actions') }}</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach($sales as $row)
+                        <tr wire:key="sale-{{ $row['uuid'] }}" @if($open === $row['uuid']) aria-selected="true" @endif>
+                            <td data-label="{{ __('Invoice') }}" data-primary>
+                                <button class="cell-title text-button" type="button" wire:click="show('{{ $row['uuid'] }}')" dir="ltr">{{ $row['invoice']['number'] ?? __('Draft sale') }}</button>
+                                <span class="cell-sub">{{ $row['when'] }}</span>
+                            </td>
+                            <td data-label="{{ __('Customer') }}">{{ $row['customer']['name'] ?? __('Walk-up customer') }}</td>
+                            <td data-label="{{ __('manager_pos.history.cashier') }}">{{ $row['cashier'] ?? '—' }}</td>
+                            <td data-label="{{ __('Status') }}"><x-ui.status :value="$row['status']" :label="$row['status_label']" /></td>
+                            <td data-label="{{ __('Total') }}" class="numeric"><span dir="ltr" class="tabular">{{ $row['grand_total']['formatted'] }}</span></td>
+                            <td class="actions">
+                                @if($row['status'] === 'draft' && $canSell)
+                                    <a class="button button--secondary button--sm" href="{{ route('center.pos', ['sale' => $row['uuid']]) }}" wire:navigate>{{ __('Open at till') }}</a>
+                                @endif
+                                <button class="button button--ghost button--sm" type="button" wire:click="show('{{ $row['uuid'] }}')">{{ __('Details') }}</button>
+                            </td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        @endif
+    </div>
 
-            <form wire:submit="addProduct">
-                <input type="text" wire:model="productName" placeholder="{{ __('Name') }}" maxlength="120" required>
-                <input type="text" inputmode="decimal" wire:model="productPrice" placeholder="{{ __('Price') }}" required>
-                <input type="text" wire:model="productBarcode" placeholder="{{ __('Barcode (optional)') }}" maxlength="64">
-                <input type="text" wire:model="productSku" placeholder="{{ __('SKU (optional)') }}" maxlength="64">
-                <button type="submit">{{ __('Add product') }}</button>
-            </form>
+    @if($paginator !== null)
+        {{ $paginator->links() }}
+    @endif
 
-            <ul>
-                @forelse ($products as $product)
-                    <li wire:key="product-{{ $product->uuid }}">
-                        {{ $product->name }} · {{ $product->price()->formatted() }}
-                        @if ($product->barcode !== null) · <span dir="ltr">{{ $product->barcode }}</span> @endif
-                        <button type="button" wire:click="archiveProduct('{{ $product->uuid }}')"
-                                wire:confirm="{{ __('Archive this product? Past sales keep it.') }}">{{ __('Archive') }}</button>
-                    </li>
-                @empty
-                    <li>{{ __('No products yet.') }}</li>
-                @endforelse
-            </ul>
-        </section>
+    @if($detail !== null)
+        @include('livewire.center.sales.detail')
     @endif
 </div>

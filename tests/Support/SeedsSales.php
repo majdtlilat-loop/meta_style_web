@@ -129,12 +129,12 @@ trait SeedsSales
         $appointment = app(CreateAppointment::class)(
             new BookingRequest(
                 branchUuid: $seed['branch']->uuid,
-                startsAt: $this->localTime($seed['branch'], CarbonImmutable::now()->addDays(33)->format('Y-m-d'), '10:00'),
+                startsAt: $this->localTime($seed['branch'], CarbonImmutable::now($seed['branch']->timezone)->addDays(33)->format('Y-m-d'), '10:00'),
                 lines: [new BookingLine(serviceUuid: $seed['service']->uuid, variationUuid: $variationUuid, addonUuids: $addonUuids)],
                 customer: CustomerRef::details('Booked Layla', '+96475'.random_int(10000000, 99999999)),
             ),
             BookingActor::staff($user),
-        );
+        )->appointment;
 
         $journey = app(CheckInAppointment::class)($appointment, $user);
 

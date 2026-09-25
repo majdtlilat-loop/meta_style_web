@@ -17,6 +17,7 @@ use App\Modules\Booking\Domain\Availability\Scheduler;
 use App\Modules\Booking\Domain\BookingSettings;
 use App\Modules\Booking\Domain\Data\BookingActor;
 use App\Modules\Booking\Domain\Enums\EmployeeSelection;
+use App\Modules\Booking\Domain\Events\AppointmentRescheduled;
 use App\Modules\Booking\Domain\Exceptions\BookingFailed;
 use App\Modules\Booking\Domain\Models\Appointment;
 use App\Modules\Booking\Domain\Models\AppointmentItem;
@@ -26,6 +27,7 @@ use App\Modules\Branches\Domain\Models\Branch;
 use App\Modules\Resources\Domain\Models\OperationalResource;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -79,6 +81,7 @@ final class RescheduleAppointment
         private readonly BranchLock $lock,
         private readonly BookingSettings $settings,
         private readonly Audit $audit,
+        private readonly Dispatcher $events,
     ) {}
 
     /**
@@ -176,6 +179,13 @@ final class RescheduleAppointment
                 // wall-clock time, and it is the one in force now.
                 'booked_timezone' => $branch->timezone,
             ])->save();
+
+            // The customer was told an hour that is no longer the hour (§11).
+            $this->events->dispatch(new AppointmentRescheduled(
+                (int) $appointment->getKey(),
+                (int) $appointment->branch_id,
+                (int) $appointment->customer_id,
+            ));
         });
 
         $appointment->refresh()->load('items');

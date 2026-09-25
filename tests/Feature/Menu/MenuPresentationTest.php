@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Kernel\Audit\Models\TenantAuditLog;
 use App\Kernel\Identity\Models\User;
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Modules\Menu\Application\MenuPublisher;
 use App\Modules\Menu\Domain\MenuPresentation;
 use App\Modules\Menu\Domain\MenuVersionStatus;
@@ -24,6 +25,19 @@ use Illuminate\Auth\Access\AuthorizationException;
 | page is stored XSS against that center's own customers.
 |
 */
+
+/**
+ * The public menu API as a guest reaches it since Phase 15: on the center's
+ * own subdomain, with the same public slug in the path (ADR-076). The old
+ * platform-host path with the public key now answers "No center is published
+ * at this address".
+ */
+function mpMenuUrl(array $center): string
+{
+    $slug = (string) $center['registration']->requested_slug;
+
+    return app(PlatformHosts::class)->centerUrl($slug, '/api/v1/menu/'.$slug);
+}
 
 it('accepts a valid presentation and rejects an unknown template', function (): void {
     $valid = MenuPresentation::fromArray([
@@ -169,7 +183,7 @@ it('keeps a draft invisible to customers until it is published', function (): vo
         ], $owner);
     });
 
-    $live = $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))
+    $live = $this->getJson(mpMenuUrl($center))
         ->assertOk()->json('data.presentation');
 
     // Editing must not change the page a customer is reading right now.
@@ -195,7 +209,7 @@ it('makes the draft live on publish, and archives what was live', function (): v
         $publisher->publish($owner);
     });
 
-    $live = $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))
+    $live = $this->getJson(mpMenuUrl($center))
         ->assertOk()->json('data.presentation');
 
     expect($live['template'])->toBe('barber_dark')
@@ -242,7 +256,7 @@ it('restores a previous version as a new version, never by rewriting history', f
         ->and($result['restored']->version)->toBeGreaterThan($result['original_version'])
         ->and($result['versions'])->toBe([1, 2, 3]);
 
-    $live = $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))
+    $live = $this->getJson(mpMenuUrl($center))
         ->assertOk()->json('data.presentation.template');
 
     expect($live)->toBe('minimal');

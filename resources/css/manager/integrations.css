@@ -1,0 +1,95 @@
+/*
+ * Manager — integrations (WhatsApp). Styles for that area only.
+ * Tokens only, logical properties only (RTL), light and dark from the same tokens.
+ */
+
+/* ── Layout ─────────────────────────────────────────────────────────── */
+.wa-page { min-width: 0; }
+.wa-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); align-items: start; min-width: 0; }
+.wa-grid > * { min-width: 0; }
+
+@media (min-width: 70rem) {
+    .wa-grid { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+}
+
+/* ── Summary lists: long identifiers wrap instead of pushing the page ── */
+.wa-summary > div { flex-wrap: wrap; align-items: flex-start; }
+.wa-summary dt { flex: 1 1 9rem; min-width: 0; }
+.wa-summary dd { flex: 1 1 12rem; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.wa-summary__stacked { flex-direction: column; align-items: stretch !important; }
+.wa-summary__stacked dd { text-align: start; }
+.wa-inline { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-1) var(--space-2); }
+
+/* ── Credentials: configured / not configured, never a value ─────────── */
+.wa-credentials { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.wa-credentials li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-divider); border-radius: var(--radius-sm); background: var(--color-surface-muted); font-weight: var(--weight-body); }
+.wa-credentials li > span:first-child { min-width: 0; color: var(--color-text); font-size: var(--text-sm); }
+
+/* ── Webhook URL ─────────────────────────────────────────────────────── */
+.wa-copy { display: grid; gap: var(--space-2); min-width: 0; }
+.wa-copy__label { display: flex; align-items: center; gap: var(--space-1); margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); font-weight: var(--weight-strong); }
+.wa-copy .copy-field { min-width: 0; }
+.wa-copy .copy-field code { user-select: all; }
+
+/* ── Setup check ─────────────────────────────────────────────────────── */
+.wa-checks .card__header h2 { display: flex; align-items: center; gap: var(--space-1); }
+.wa-checks .card__header .info-tip::after { inset-inline-start: auto; inset-inline-end: 0; }
+.wa-checklist { display: grid; margin: 0; padding: 0; list-style: none; }
+.wa-checklist__item { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3) var(--space-5); border-block-end: 1px solid var(--color-divider); }
+.wa-checklist__item:last-child { border-block-end: 0; }
+.wa-checklist__icon { display: inline-grid; flex: none; place-items: center; inline-size: 1.75rem; block-size: 1.75rem; border-radius: var(--radius-pill); background: var(--color-neutral-soft); color: var(--color-neutral); }
+.wa-checklist__icon[data-tone="success"] { background: var(--color-success-soft); color: var(--color-success); }
+.wa-checklist__icon[data-tone="danger"] { background: var(--color-danger-soft); color: var(--color-danger); }
+.wa-checklist__icon[data-tone="warning"] { background: var(--color-warning-soft); color: var(--color-warning); }
+.wa-checklist__body { display: grid; gap: .1rem; min-width: 0; padding-block-start: .2rem; }
+.wa-checklist__label { color: var(--color-text); font-size: var(--text-sm); font-weight: var(--weight-strong); }
+.wa-checklist__item[data-state="problem"] .cell-sub { color: var(--color-danger); }
+
+/* ── Booking flow + languages ───────────────────────────────────────── */
+.wa-flow__groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: var(--space-5); }
+.wa-flow__group h3 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); color: var(--color-text-muted); font-size: var(--text-sm); font-weight: var(--weight-strong); }
+.wa-flow__group ul { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.wa-flow__group li { display: flex; align-items: flex-start; gap: var(--space-2); color: var(--color-text); font-size: var(--text-sm); line-height: 1.5; }
+.wa-flow__group li .ui-icon { flex: none; margin-block-start: .15rem; color: var(--color-success); }
+.wa-flow__group[data-locked] li { color: var(--color-text-muted); }
+.wa-flow__group[data-locked] li .ui-icon { color: var(--color-text-subtle); }
+
+.wa-languages__list { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.wa-languages__list li { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-elevated); font-size: var(--text-sm); }
+.wa-languages__list strong { color: var(--color-heading); font-weight: var(--weight-strong); letter-spacing: .02em; }
+.wa-languages__list li > span { color: var(--color-text-muted); }
+
+/* ── RAYAN card ─────────────────────────────────────────────────────── */
+.wa-assistant .choice--switch { margin-block-start: 0; }
+.wa-assistant textarea { min-block-size: 5.5rem; resize: vertical; }
+.wa-assistant .field__row .info-tip::after { inset-inline-start: auto; inset-inline-end: 0; }
+
+/* ── Guest booking confirmations ────────────────────────────────────── */
+.wa-confirmations__switch { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
+.wa-confirmations__switch .choice--switch { flex: 1 1 auto; min-width: 0; margin-block-start: 0; }
+.wa-confirmations__switch .info-tip { flex: none; margin-block-start: .15rem; }
+.wa-confirmations__switch .info-tip::after { inset-inline-start: auto; inset-inline-end: 0; }
+.wa-confirmations__counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr)); gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.wa-confirmations__counts li { display: grid; gap: .1rem; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-divider); border-radius: var(--radius-sm); background: var(--color-surface-muted); }
+.wa-confirmations__counts strong { color: var(--color-heading); font-size: var(--text-lg); font-weight: var(--weight-strong); line-height: 1.2; }
+.wa-confirmations__counts span { color: var(--color-text-muted); font-size: var(--text-xs); }
+.wa-confirmations__counts li[data-kind="sent"] strong { color: var(--color-success); }
+.wa-confirmations__counts li[data-kind="failed"] strong { color: var(--color-danger); }
+.wa-confirmations__counts li[data-kind="unconfirmed"] strong { color: var(--color-warning); }
+
+/* ── Connection drawer ──────────────────────────────────────────────── */
+.wa-secrets { display: grid; gap: var(--space-3); margin: 0; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-muted); min-width: 0; }
+.wa-secrets > legend { padding-inline: var(--space-1); font-weight: var(--weight-strong); }
+.wa-secrets .field-help { display: flex; align-items: center; gap: var(--space-1); margin: 0; }
+.wa-secrets .wa-credentials li { background: var(--color-surface-elevated); }
+.wa-secrets > .button { justify-self: start; }
+
+@media (max-width: 40rem) {
+    .wa-form .form-grid { grid-template-columns: minmax(0, 1fr); }
+    .wa-copy__text { display: none; }
+    .wa-checklist__item { padding-inline: var(--space-4); }
+}
+
+@media (pointer: coarse) {
+    .wa-page .button--sm, .wa-page .icon-button--sm { min-block-size: 2.5rem; }
+}

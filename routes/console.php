@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use App\Kernel\SaaS\TrialPolicy;
+use App\Modules\PlatformOperations\Application\ApplyScheduledSubscriptionChanges;
+use App\Modules\PlatformOperations\Application\RefreshOperationalProjections;
 use Illuminate\Support\Facades\Schedule;
 
 /*
@@ -54,5 +56,80 @@ Schedule::call(fn () => app(TrialPolicy::class)->expireLapsedTrials())
  */
 Schedule::command('metastyle:idempotency:sweep')
     ->hourly()
+    ->withoutOverlapping()
+    ->onOneServer();
+
+/*
+ * Repairs after-commit reactions from canonical facts: loyalty earned on a
+ * payment, a membership or package activated by one, a refund's reversal.
+ *
+ * Those reactions run only AFTER the payment commits, so a failure in them can
+ * never undo real money — and this is what stops such a failure, or a process
+ * that died between the commit and the callback, from losing them for good.
+ * Every reconciler is idempotent: an hour with nothing lost writes nothing
+ * (docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md §1). Benefit screens and checkout
+ * also reconcile the one customer in front of them before use, so correctness
+ * never waits for this.
+ */
+Schedule::command('metastyle:reconcile --days=3')
+    ->hourly()
+    ->withoutOverlapping()
+    ->onOneServer();
+
+/*
+ * Appointment reminders, benefit expiry warnings and notification retention.
+ *
+ * HOURLY, and bounded on both sides. The reminder lead time is a day by
+ * default, so an hourly pass writes a reminder within an hour of the
+ * appointment entering the window — and a pass that overlaps the previous one,
+ * or catches up after an outage, writes nothing twice: every notification is
+ * keyed on the fact it is about (docs/23-NOTIFICATIONS.md §§12–13).
+ *
+ * Correctness never depends on this. A missed hour means a reminder arrives an
+ * hour later, not a lost appointment — the appointment, the invoice and the
+ * benefit are the record, and none of them is written here.
+ */
+Schedule::command('metastyle:notifications:sweep')
+    ->hourly()
+    ->withoutOverlapping()
+    ->onOneServer();
+
+/*
+ * Refreshes the control-plane usage projection Super Admin reads.
+ *
+ * REPORTING ONLY. Every quota decision is made against the center's own
+ * `usage_counters` row, inside the center's own database, and never against
+ * this copy — so a missed run makes the platform's dashboard an hour stale and
+ * changes nothing about what any center is allowed to do
+ * (docs/26-USAGE-QUOTAS.md §9).
+ *
+ * Hourly for the same reason the sweeps above are: it bounds how wrong the
+ * report can be without paying for a pass nobody reads. Each center is
+ * projected independently, so one unreachable database does not stop the rest.
+ */
+Schedule::command('metastyle:usage:project')
+    ->hourly()
+    ->withoutOverlapping()
+    ->onOneServer();
+
+Schedule::call(fn (): int => app(ApplyScheduledSubscriptionChanges::class)())
+    ->everyFifteenMinutes()
+    ->name('metastyle:subscriptions:apply-scheduled')
+    ->withoutOverlapping()
+    ->onOneServer();
+
+/*
+ * The Super Admin's Center Users directory: a read model of every center's
+ * user accounts. A report, never a decision; changes made from the platform
+ * re-project their center immediately, and this catches the rest.
+ */
+Schedule::command('metastyle:center-users:project')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping()
+    ->onOneServer();
+
+Schedule::call(fn (): int => app(RefreshOperationalProjections::class)())
+    ->everyFifteenMinutes()
+    ->name('metastyle:operations:project')
     ->withoutOverlapping()
     ->onOneServer();

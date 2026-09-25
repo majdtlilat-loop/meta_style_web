@@ -90,13 +90,20 @@ final class SaveBranch
     private function authorize(User $actingUser, ?Branch $branch): void
     {
         if (! $actingUser->hasPermission(Permission::BranchManage)) {
-            throw new AuthorizationException('You may not manage branches.');
+            throw new AuthorizationException(__('manager_staff.errors.branch_manage_denied'));
         }
 
         // Permission AND branch scope. A manager scoped to one branch must not
         // be able to edit another's opening hours or phone number.
         if ($branch !== null && ! $actingUser->branchScope()->allows($branch->id)) {
-            throw new AuthorizationException('You may not manage that branch.');
+            throw new AuthorizationException(__('manager_staff.errors.branch_denied'));
+        }
+
+        // A NEW branch lies outside every limited scope, so a manager of some
+        // branches would open one they could then neither see nor edit. Only
+        // someone who runs every branch opens another.
+        if ($branch === null && ! $actingUser->branchScope()->isUnrestricted()) {
+            throw new AuthorizationException(__('manager_staff.errors.branch_create_scoped'));
         }
     }
 

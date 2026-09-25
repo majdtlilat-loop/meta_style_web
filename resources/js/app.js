@@ -1,1 +1,16 @@
 import './bootstrap';
+import './platform/theme';
+import './platform/sortable';
+import './manager/shell';
+import './manager/dashboard';
+import './manager/reports';
+import './manager/advanced-reports';
+import './manager/booking';
+import './manager/queue';
+import './manager/customers';
+import './manager/staff';
+import './manager/pos';
+import './manager/catalog';
+import './manager/site-builder';
+import './manager/appearance';
+import './manager/integrations';

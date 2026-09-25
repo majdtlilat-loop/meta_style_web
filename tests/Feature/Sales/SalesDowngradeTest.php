@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 use App\Kernel\Entitlements\Entitlements;
 use App\Kernel\Entitlements\Exceptions\EntitlementRequired;
-use App\Kernel\Tenancy\Infrastructure\StanclTenantResolver;
 use App\Livewire\Center\PointOfSale;
 use App\Livewire\Center\Sales as SalesScreen;
 use App\Modules\Sales\Application\Actions\AddSaleLine;
@@ -16,7 +15,7 @@ use App\Modules\Sales\Application\SalesQuery;
 use App\Modules\Sales\Domain\Enums\SaleStatus;
 use App\Modules\Sales\Domain\Models\Invoice;
 use App\Modules\Sales\Domain\Models\Sale;
-use Illuminate\Support\Facades\Auth;
+use App\View\Manager\FeatureOffer;
 use Livewire\Livewire;
 
 /*
@@ -58,17 +57,6 @@ function sdIssue(): array
         'invoice' => $issued->invoice,
         'token' => (string) $issued->shareToken,
         'branch' => $seed['branch']->uuid,
-    ];
-}
-
-/**
- * @return array<string, mixed>
- */
-function sdSession(array $center, $user): array
-{
-    return [
-        StanclTenantResolver::SESSION_KEY => test()->publicKeyOf($center['tenant']),
-        Auth::guard('web')->getName() => $user->getAuthIdentifier(),
     ];
 }
 
@@ -152,19 +140,24 @@ it('keeps the customer\'s existing invoice link working after POS is withdrawn',
         return $issued;
     });
 
-    $this->getJson('/api/v1/invoices/'.$center['tenant']->publicKey.'/'.$issued['token'])
+    // Phase 15: the public API resolves on the center's own host, its slug in the path.
+    $slug = $center['registration']->requested_slug;
+    $api = 'http://'.$slug.'.localhost:8000/api/v1/invoices/'.$slug.'/';
+
+    $this->getJson($api.$issued['token'])
         ->assertStatus(200)
         ->assertJsonPath('data.invoice.number', $issued['invoice']->number);
 
-    $this->get('/i/'.$center['tenant']->publicKey.'/'.$issued['token'])
+    // Phase 15: the customer's page lives on the center's own host.
+    $this->get('http://'.$center['registration']->requested_slug.'.localhost:8000/i/'.$issued['token'])
         ->assertStatus(200)
         ->assertSee($issued['invoice']->number);
 
     // A leaked link can still be revoked: securing history is not a new sale.
     $fresh = $this->asCenter($center['tenant'], fn (): string => app(RotateInvoiceLink::class)($issued['invoice'], $this->ownerWithCatalogAccess()));
 
-    $this->getJson('/api/v1/invoices/'.$center['tenant']->publicKey.'/'.$issued['token'])->assertStatus(404);
-    $this->getJson('/api/v1/invoices/'.$center['tenant']->publicKey.'/'.$fresh)->assertStatus(200);
+    $this->getJson($api.$issued['token'])->assertStatus(404);
+    $this->getJson($api.$fresh)->assertStatus(200);
 });
 
 it('lets printing follow `printing` alone once POS is gone', function (): void {
@@ -180,20 +173,24 @@ it('lets printing follow `printing` alone once POS is gone', function (): void {
         return $issued['invoice'];
     });
 
+    // Phase 15: the Manager — and its print pages — live on the center's own
+    // host, under /manager.
+    $manager = 'http://'.$center['registration']->requested_slug.'.localhost:8000/manager';
+
     // POS withdrawn, Printing owned: the paper still prints.
-    $this->withSession(sdSession($center, $owner))
-        ->get("/center/sales/invoices/{$invoice->uuid}/print/80mm")
-        ->assertOk()
-        ->assertSee($invoice->number);
+    $this->asCenter($center['tenant'], function () use ($owner, $manager, $invoice): void {
+        $this->actingAs($owner)
+            ->get("{$manager}/sales/invoices/{$invoice->uuid}/print/80mm")
+            ->assertOk()
+            ->assertSee($invoice->number);
 
-    $this->asCenter($center['tenant'], function (): void {
         $this->revokeEntitlement('printing');
-    });
 
-    // Printing withdrawn too: no paper, while the digital invoice stays.
-    $this->withSession(sdSession($center, $owner))
-        ->get("/center/sales/invoices/{$invoice->uuid}/print/a4")
-        ->assertStatus(403);
+        // Printing withdrawn too: no paper, while the digital invoice stays.
+        $this->actingAs($owner)
+            ->get("{$manager}/sales/invoices/{$invoice->uuid}/print/a4")
+            ->assertStatus(403);
+    });
 
     $this->withHeaders($this->tokenHeaders($this->apiTokenFor($center['tenant'])))
         ->getJson("/api/v1/tenant/invoices/{$invoice->uuid}")
@@ -210,16 +207,24 @@ it('shows the history screen read-only and closes the till when POS is withdrawn
         $this->revokeEntitlement('pos');
         $this->actingAs($owner, 'web');
 
+        // The Manager's shared downgrade notice (Phase 15) replaces the page's
+        // own sentence; the rule it states is the same: history stays readable.
+        $feature = app(FeatureOffer::class)->for('pos')['name'] ?? 'pos';
+
         Livewire::test(SalesScreen::class)
             ->set('branch', $issued['branch'])
             ->call('show', $issued['sale']->uuid)
             ->assertSet('error', '')
             ->assertSee($issued['invoice']->number)
-            ->assertSee('Past sales and invoices remain available to read.')
+            ->assertSee(__('manager_features.ui.history_notice', ['feature' => $feature]))
             ->assertDontSee('Void sale');
 
+        // The till is for NEW sales: the upgrade state, never a raw
+        // entitlement key such as "[pos]".
         Livewire::test(PointOfSale::class)
-            ->assertSee('does not include [pos]')
+            ->assertSee(__('manager_features.ui.eyebrow'))
+            ->assertSee($feature)
+            ->assertDontSee('[pos]')
             ->assertDontSee('Finalize and issue invoice');
     });
 });

@@ -102,7 +102,9 @@ final class CallTicket
                         'last_called_at' => $at,
                         'call_count' => $locked->call_count + 1,
                         'service_point_id' => $point?->getKey() ?? $locked->service_point_id,
-                        // A held ticket that is called comes off hold.
+                        // Defensive only: `held → called` is not an edge of the
+                        // state map, so a held ticket is RESUMED (back to its
+                        // place) before anybody calls it (TicketState).
                         'held_at' => null,
                         'hold_reason' => null,
                     ],

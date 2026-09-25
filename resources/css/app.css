@@ -1,11 +1,45 @@
 @import 'tailwindcss';
+@import './foundation/tokens.css';
+@import './platform/base.css';
+@import './platform/components.css';
+@import './platform/shell.css';
+@import './platform/workspaces.css';
+@import './platform/charts.css';
+@import './platform/sadmin.css';
+@import './platform/landing.css';
+@import './manager/upsell.css';
+@import './manager/shell.css';
+@import './manager/dashboard.css';
+@import './manager/reports.css';
+@import './manager/advanced-reports.css';
+@import './manager/booking.css';
+@import './manager/queue.css';
+@import './manager/customers.css';
+@import './manager/staff.css';
+@import './manager/pos.css';
+@import './manager/catalog.css';
+@import './manager/site-builder.css';
+@import './manager/appearance.css';
+@import './manager/integrations.css';
 
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
 @source '../../storage/framework/views/*.php';
 @source '../**/*.blade.php';
 @source '../**/*.js';
 
-@theme {
-    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
-        'Segoe UI Symbol', 'Noto Color Emoji';
-}
+/*
+ * The approved typefaces, self-hosted (SIL OFL). Before these rules existed the
+ * stack only NAMED Poppins and Noto Sans Arabic, so every machine without them
+ * installed silently rendered Segoe UI or Tahoma.
+ *
+ * Two cuts per script, and each face claims a weight RANGE so the browser maps
+ * every requested weight onto one of the approved files instead of
+ * synthesising a fake bold:
+ *
+ *   Latin    Poppins Regular (body)          Poppins SemiBold (headings)
+ *   Arabic   Noto Sans Arabic Light (body)   Noto Sans Arabic Medium (headings)
+ */
+@font-face { font-family: "Poppins"; src: url('../fonts/Poppins-Regular.ttf') format('truetype'); font-weight: 100 500; font-style: normal; font-display: swap; }
+@font-face { font-family: "Poppins"; src: url('../fonts/Poppins-SemiBold.ttf') format('truetype'); font-weight: 600 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Noto Sans Arabic"; src: url('../fonts/NotoSansArabic-Light.ttf') format('truetype'); font-weight: 100 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Noto Sans Arabic"; src: url('../fonts/NotoSansArabic-Medium.ttf') format('truetype'); font-weight: 500 900; font-style: normal; font-display: swap; }

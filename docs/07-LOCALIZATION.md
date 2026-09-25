@@ -1,9 +1,10 @@
 # 07 — Localization
 
-> Status: **Partly implemented.** The language registry (Phase 1) and the
-> `Translatable` cast plus `TranslatedText` value object (Phase 3) are live and
-> used by branch, employee and role names. Locale resolution middleware, UI
-> strings and the tenant-enabled-locales setting arrive in Phase 4.
+> Status: **Implemented.** The language registry, translatable values,
+> tenant-enabled locales and request/session locale resolution are live.
+> Phase 15 adds the reusable Corporate/SADMIN switcher and translation parity
+> checks. Approved local font binaries are still required for the locked
+> Poppins/Noto Sans Arabic typography; see `29-PLATFORM-ADMIN.md`.
 
 ## 1. Launch languages
 
@@ -13,9 +14,10 @@
 | `ar` | Arabic | Arabic | RTL |
 | `ckb` | Kurdish Sorani | Arabic (Sorani) | RTL |
 
-`ckb` is the correct ISO 639-3 code for Sorani. **Do not use `ku`** — that is
-the macrolanguage and is commonly read as Kurmanji (Latin script, LTR), which
-would produce the wrong direction and the wrong font stack.
+`ckb` is the correct internal ISO 639-3 code for Sorani. **Do not rename locale
+keys to `ku`** — existing configuration, storage and translations depend on
+`ckb`. The user-facing short label is deliberately **KU**, alongside **EN** and
+**AR**; `CKB` must never be shown as the visible abbreviation.
 
 Adding a language later must require **no migration and no code change**: one
 row in the control-plane `languages` table plus a translation file.
@@ -44,7 +46,7 @@ They have different lifecycles and different storage.
 
 ### 3.1 UI strings
 
-Standard Laravel: `resources/lang/{en,ar,ckb}/*.php` plus JSON files. Nothing
+Standard Laravel: `lang/{en,ar,ckb}/*.php` plus JSON files. Nothing
 custom.
 
 A per-tenant UI string override layer (a center renaming "Employee" to
@@ -100,7 +102,7 @@ ALTER TABLE services
 Rule: **every generated column must be justified by a named query** in the
 migration comment. Do not add one per locale per table by reflex.
 
-For genuine multilingual full-text search (Phase 12+), the answer is a search
+For genuine multilingual full-text search (Phase 13+), the answer is a search
 index (`14-FUTURE-INTEGRATIONS.md` §7), not more generated columns.
 
 ## 4. Which locales a tenant has
@@ -134,24 +136,32 @@ translatable content ends up half-filled.
 ## 5. Locale resolution
 
 ```
-1. Explicit ?locale= query parameter        (must be in tenant enabled_locales)
-2. Authenticated user / customer preference
-3. Accept-Language header, negotiated       (against enabled_locales)
-4. Tenant default_locale
-5. Platform fallback: en
+1. Explicit user-selected locale            (validated; persisted in session)
+2. Persisted session preference
+3. Authenticated user preference            (when that surface supports one)
+4. Accept-Language header, negotiated        (against allowed/enabled locales)
+5. Tenant or application default locale
+6. Platform fallback: en
 ```
 
 Resolved once per request by middleware, stored in `Kernel/Localization`, and
 applied to `app()->setLocale()`, Carbon, and number formatting.
 
 A requested locale that the tenant has not enabled falls back silently; it is
-not an error.
+not an error. `Accept-Language` never overrides an explicit persisted choice.
+Changing locale changes presentation only and never changes authentication,
+authorization or tenant context.
 
 ### 5.1 Fallback chain for a missing translation
 
 ```
 requested locale → tenant default → platform fallback (en) → any non-empty value → ""
 ```
+
+With no explicit locale, the "requested" one is the request's language only when the center
+publishes in it: an English-speaking manager of an Arabic-first center that also publishes English
+reads English, while a translation left behind in a language the center switched off never
+outranks the default (ADR-101).
 
 **A translatable field must never render as an empty string when any
 translation exists.** A service with only an Arabic name shows the Arabic name

@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Modules\Booking\Application\Actions\IssueVerificationCode;
+use App\Modules\Booking\Application\BookingVerification;
 use App\Modules\Booking\Contracts\BookingEngine;
 use App\Modules\Booking\Domain\Data\BookingActor;
 use App\Modules\Booking\Domain\Data\BookingLine;
@@ -55,7 +57,7 @@ function attemptBooking(array $seed, string $customerName): Appointment
             customer: CustomerRef::details($customerName, '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 it('lets exactly one of two requests for the same slot succeed', function (): void {
@@ -105,7 +107,7 @@ it('lets the second request succeed at an adjacent time', function (): void {
                 customer: CustomerRef::details('Customer B', '+9647512345678'),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        );
+        )->appointment;
 
         expect($second->exists)->toBeTrue()
             ->and(Appointment::query()->count())->toBe(2);
@@ -202,7 +204,7 @@ it('protects a reschedule with the same lock as a booking', function (): void {
                 customer: CustomerRef::details('Customer B', '+9647512345679'),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        );
+        )->appointment;
 
         // Moving B onto A's time must be refused exactly as booking it would
         // be. A reschedule that skipped the check would be a double-booking
@@ -240,6 +242,85 @@ it('lets an appointment be moved onto a time it already partly occupies', functi
     });
 });
 
+it('leaves exactly one working code when a booking code is regenerated twice', function (): void {
+    $center = $this->registerCenter();
+
+    $this->asCenter($center['tenant'], function (): void {
+        $seed = $this->seedBookableCenter();
+        $owner = $this->ownerWithCatalogAccess();
+
+        $appointment = attemptBooking($seed, 'Customer A');
+
+        $issue = app(IssueVerificationCode::class);
+
+        $first = $issue->forStaff($appointment, $owner);
+        $second = $issue->forStaff($appointment, $owner);
+
+        $verification = app(BookingVerification::class);
+
+        // Re-read, so what is checked is the digest that SURVIVED rather than
+        // whatever the in-memory model happens to be carrying.
+        $fresh = Appointment::query()->whereKey($appointment->getKey())->firstOrFail();
+
+        expect($first)->not->toBe($second)
+            ->and($verification->matches($fresh, $second))->toBeTrue();
+
+        /*
+         * The whole point of regenerating. A customer asks for a new code
+         * precisely when they think somebody else has seen the old one, so a
+         * superseded code that still opened the booking would make the feature
+         * worse than useless (docs/24-BOOKING-VERIFICATION.md §8).
+         */
+        expect($verification->matches($fresh, $first))
+            ->toBeFalse('the superseded code still opens the booking');
+    });
+});
+
+it('makes a second regeneration of the same booking wait for the first', function (): void {
+    $center = $this->registerCenter();
+
+    $this->asCenter($center['tenant'], function (): void {
+        $seed = $this->seedBookableCenter();
+        $owner = $this->ownerWithCatalogAccess();
+
+        $appointment = attemptBooking($seed, 'Customer A');
+        $original = (string) $appointment->verification_code_digest;
+
+        [$otherDesk, $release] = secondTenantConnection('tenant_code_issue');
+
+        try {
+            // Desk A is mid-regeneration: it holds the appointment row.
+            $otherDesk->beginTransaction();
+            $otherDesk->table('appointments')->where('id', $appointment->getKey())->lockForUpdate()->get();
+
+            $waited = waitsForTenantLock(fn () => app(IssueVerificationCode::class)->forStaff($appointment, $owner));
+
+            /*
+             * A REAL database lock, not a check-then-write. Two people pressing
+             * "regenerate" in the same second must not end with the digest of
+             * one code written while the other person walks away holding the
+             * other — and the only thing that can guarantee that is the row
+             * lock the Action takes inside its transaction.
+             */
+            expect($waited)->toBeTrue()
+                ->and((string) Appointment::query()
+                    ->whereKey($appointment->getKey())
+                    ->value('verification_code_digest'))
+                ->toBe($original, 'the blocked regeneration wrote anyway');
+        } finally {
+            $release();
+        }
+
+        // And once the row is free again, the same call goes through.
+        $issued = app(IssueVerificationCode::class)->forStaff($appointment, $owner);
+
+        $fresh = Appointment::query()->whereKey($appointment->getKey())->firstOrFail();
+
+        expect(app(BookingVerification::class)->matches($fresh, $issued))->toBeTrue()
+            ->and((string) $fresh->verification_code_digest)->not->toBe($original);
+    });
+});
+
 /**
  * @param  array<string, mixed>  $seed
  */
@@ -253,7 +334,7 @@ function attemptAnyAvailable(array $seed): Appointment
             customer: CustomerRef::details('Customer '.uniqid(), '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 afterEach(function (): void {

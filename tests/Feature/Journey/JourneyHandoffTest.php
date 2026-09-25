@@ -88,7 +88,7 @@ function hoBook(array $seed): Appointment
             customer: CustomerRef::details('Sara Ahmed', '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 it('records both ends of a handoff, and moves the customer on', function (): void {

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Requests;
 
+use App\Kernel\Tenancy\Infrastructure\TenantModel;
+use App\Kernel\Tenancy\PlatformHosts;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\Validator;
@@ -30,11 +32,13 @@ final class RegisterCenterRequest extends FormRequest
     {
         return [
             'center_name' => ['required', 'string', 'min:2', 'max:190'],
+            'center_slug' => ['required', 'string', 'min:2', 'max:63', 'regex:/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/'],
             'owner_name' => ['required', 'string', 'min:2', 'max:190'],
-            'owner_email' => ['nullable', 'email:rfc', 'max:190'],
-            // E.164. Stored in one canonical form so a number is one value
-            // regardless of how it was typed (docs/07-LOCALIZATION.md §7).
-            'owner_phone' => ['nullable', 'string', 'regex:/^\+[1-9][0-9]{7,17}$/'],
+            'owner_email' => ['required', 'email:rfc', 'max:190'],
+            // Required: every center user account has a phone. E.164, one
+            // canonical form so a number is one value however it was typed
+            // (docs/07-LOCALIZATION.md §7).
+            'owner_phone' => ['required', 'string', 'regex:/^\+[1-9][0-9]{7,14}$/'],
             'password' => ['required', 'string', Password::min(10)->uncompromised()],
             'locale' => ['nullable', 'string', 'in:'.implode(',', array_keys((array) config('localization.languages')))],
             'country' => ['nullable', 'string', 'size:2'],
@@ -44,10 +48,18 @@ final class RegisterCenterRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator): void {
-            // One contact method is required, either one will do. Phone is
-            // primary in the target market; email is common for owners.
-            if ($this->input('owner_email') === null && $this->input('owner_phone') === null) {
-                $validator->errors()->add('owner_email', 'An email address or a phone number is required.');
+            $slug = app(PlatformHosts::class)->normalizeSlug((string) $this->input('center_slug'));
+
+            if (! app(PlatformHosts::class)->isValidCenterSlug($slug)) {
+                $validator->errors()->add('center_slug', 'This center address is unavailable.');
+            }
+
+            // Pending registrations are deliberately left to RegistrationService:
+            // it checks idempotency before slug availability, so an exact retry
+            // returns the original registration while a different submission for
+            // the same slug is still refused.
+            if (TenantModel::query()->where('slug', $slug)->exists()) {
+                $validator->errors()->add('center_slug', 'This center address is unavailable.');
             }
         });
     }

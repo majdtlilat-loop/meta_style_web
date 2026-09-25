@@ -62,6 +62,48 @@
 <body>
     <main class="sheet">
         @include('sales.partials.invoice-body', ['invoice' => $invoice])
+
+        {{-- Paid, pending, remaining — and paying online where the center offers
+             it. Allow-listed by PublicInvoicePayments; the invoice above renders
+             whether or not online payment is available (docs/19-PAYMENTS.md §60). --}}
+        @isset($payment)
+            <section class="payment">
+                <dl class="totals">
+                    <div><dt>{{ __('invoice_public.paid') }}</dt><dd>{{ $payment['paid']['formatted'] }}</dd></div>
+                    @if ($payment['pending']['amount'] > 0)
+                        <div><dt>{{ __('invoice_public.payment_pending') }}</dt><dd>{{ $payment['pending']['formatted'] }}</dd></div>
+                    @endif
+                    @unless ($payment['voided'])
+                        <div class="grand"><dt>{{ __('invoice_public.remaining') }}</dt><dd>{{ $payment['remaining']['formatted'] }}</dd></div>
+                    @endunless
+                </dl>
+
+                @if (session('payment_status') === 'unavailable')
+                    <p class="notice" role="alert">{{ __('invoice_public.payment_unavailable') }}</p>
+                @endif
+
+                @foreach ($payment['pending_online'] as $pending)
+                    <div class="pending-online" role="status">
+                        <p>{{ __('invoice_public.payment_waiting') }}</p>
+                        @if ($pending['code'] !== null)
+                            <p>{{ __('invoice_public.payment_code') }}: <strong dir="ltr">{{ $pending['code'] }}</strong></p>
+                        @endif
+                        @if ($pending['link'] !== null)
+                            <p><a href="{{ $pending['link'] }}" rel="noopener noreferrer">{{ __('invoice_public.open_payment_app') }}</a></p>
+                        @endif
+                    </div>
+                @endforeach
+
+                @foreach ($payment['online_options'] as $option)
+                    <form method="POST" action="{{ route('invoice.public.pay', ['center' => request()->route('center'), 'token' => request()->route('token')]) }}" class="actions">
+                        @csrf
+                        <input type="hidden" name="gateway" value="{{ $option['gateway'] }}">
+                        <input type="hidden" name="payment_key" value="{{ $paymentKey }}">
+                        <button type="submit">{{ __('invoice_public.pay_with', ['provider' => $option['name']]) }}</button>
+                    </form>
+                @endforeach
+            </section>
+        @endisset
     </main>
 
     <div class="actions">

@@ -100,6 +100,11 @@ it('renders a finalized invoice in a fixed number of queries, without touching t
             SaleStatus::Finalized,
         );
 
+        // Warm anything cached per request (permissions, entitlements, the
+        // center's content locales a translated name falls back to) — the
+        // same warm-up the cart test does; what is counted is what grows.
+        $render($small)();
+
         $statements = [];
 
         DB::connection('tenant')->listen(function ($query) use (&$statements): void {

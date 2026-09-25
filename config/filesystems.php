@@ -41,8 +41,20 @@ return [
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),
-            'url' => rtrim(env('APP_URL', 'http://localhost'), '/').'/storage',
+            'url' => rtrim((string) env('APP_URL'), '/').'/storage',
             'visibility' => 'public',
+            'throw' => false,
+            'report' => false,
+        ],
+
+        // [area:shell] Files a center attaches to its support tickets with
+        // Meta Style. A CONTROL-PLANE store: deliberately not in
+        // config/tenancy.php's tenant-suffixed disks, so the platform team
+        // reads the very file the center uploaded. Never served directly.
+        'platform_support' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private/platform-support'),
+            'serve' => false,
             'throw' => false,
             'report' => false,
         ],

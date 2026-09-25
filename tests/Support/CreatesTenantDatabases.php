@@ -39,10 +39,11 @@ trait CreatesTenantDatabases
      * so a regression in provisioning fails the isolation suite too.
      *
      * @param  list<string>  $domains
+     * @param  string|null  $slug  names the database; none gives the neutral label (ADR-106)
      */
-    protected function provisionTenant(string $name, array $domains = []): Tenant
+    protected function provisionTenant(string $name, array $domains = [], ?string $slug = null): Tenant
     {
-        $tenant = app(TenantProvisioningService::class)->provision($name, $domains);
+        $tenant = app(TenantProvisioningService::class)->provision($name, $domains, null, $slug);
 
         $this->createdTenantDatabases[] = $tenant->databaseName;
 
@@ -76,7 +77,7 @@ trait CreatesTenantDatabases
      */
     protected function createTenantDatabase(string $suffix): string
     {
-        $database = TestDatabaseManager::PREFIX.'raw_'.$suffix;
+        $database = TestDatabaseManager::prefix().'raw_'.$suffix;
 
         TestDatabaseManager::create($database);
 

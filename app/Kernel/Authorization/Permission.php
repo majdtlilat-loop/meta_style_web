@@ -61,6 +61,11 @@ enum Permission: string
     case MenuView = 'menu.view';
     case MenuManage = 'menu.manage';
 
+    // The center's own public site: brand, landing page, and the
+    // booking, cart and print presentation. Content only — never payments.
+    case AppearanceView = 'appearance.view';
+    case AppearanceManage = 'appearance.manage';
+
     // Media
     case MediaUpload = 'media.upload';
 
@@ -187,6 +192,118 @@ enum Permission: string
     case CashierShiftSupervise = 'cashier_shift.supervise';
     case ProductManage = 'product.manage';
 
+    /*
+     * Payments — money collected against invoices, and money returned.
+     *
+     *   view            reads payments, refunds and an invoice's settlement.
+     *   collect         takes a payment: cash, a manually confirmed transfer, or
+     *                   an online payment through the branch's gateway.
+     *   refund          returns money. A different person from the one who
+     *                   collects, in most centers.
+     *   gateway.manage  configures a branch's merchant account — the one place
+     *                   credentials are written. Never granted to a cashier.
+     *
+     * Reconciling a drawer reuses `cashier_shift.manage` (your own till) and
+     * `cashier_shift.supervise` (anybody's): that distinction already exists
+     * (docs/19-PAYMENTS.md §46).
+     */
+    case PaymentView = 'payment.view';
+    case PaymentCollect = 'payment.collect';
+    case PaymentRefund = 'payment.refund';
+    case PaymentGatewayManage = 'payment.gateway.manage';
+
+    /*
+     * Finance — the center's ledger, dashboard and expenses
+     * (docs/20-FINANCE.md §46).
+     *
+     *   view    the dashboard and the ledger.
+     *   manage  expense categories, posting and voiding expenses.
+     */
+    case FinanceView = 'finance.view';
+    case ExpenseManage = 'expense.manage';
+
+    /*
+     * Loyalty, memberships and service packages — a customer's benefits
+     * (docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md §20).
+     *
+     *   *.view           a customer's points, memberships and packages — and,
+     *                    with `sale.create`, applying the ones they are entitled
+     *                    to at checkout. An entitled benefit is not a
+     *                    discretionary discount, so it needs no `sale.adjust`.
+     *   loyalty.manage   the program's rules and tiers.
+     *   loyalty.adjust   a manual, reasoned points adjustment.
+     *   membership.manage / package.manage
+     *                    plans and definitions, and cancelling a customer's.
+     */
+    case LoyaltyView = 'loyalty.view';
+    case LoyaltyManage = 'loyalty.manage';
+    case LoyaltyAdjust = 'loyalty.adjust';
+    case MembershipView = 'membership.view';
+    case MembershipManage = 'membership.manage';
+    case PackageView = 'package.view';
+    case PackageManage = 'package.manage';
+
+    /*
+     * Reviews — what customers said about their visits
+     * (docs/22-REVIEWS.md §19).
+     *
+     * TWO codes, and deliberately not six. There is no `review.rating.view`
+     * beside `review.view`, because a rating with the review it came from
+     * hidden is a number nobody can act on; and no code per dimension, because
+     * "may read service ratings but not employee ratings" is not a job anybody
+     * has.
+     *
+     *   view    read reviews, ratings and the summaries, within branch scope.
+     *   manage  hide, unhide, flag, and issue or revoke a customer's review
+     *           link. A moderation action is a manager's, and every one of them
+     *           is audited with its reason.
+     *
+     * Reading history and moderating it survive a downgrade; ISSUING a new
+     * invitation does not — the Booking rule (§18).
+     */
+    case ReviewView = 'review.view';
+    case ReviewManage = 'review.manage';
+
+    /*
+     * Reports — the two actions that are meaningfully different for a center.
+     * Viewing remains branch- and domain-permission-scoped. Exporting is a
+     * separate grant because it creates a portable copy of the same data.
+     */
+    case ReportView = 'report.view';
+    case ReportExport = 'report.export';
+
+    // Center-to-platform support. Separate from customer conversations and CRM.
+    case PlatformSupportView = 'platform_support.view';
+    case PlatformSupportManage = 'platform_support.manage';
+
+    /*
+     * Conversations — WhatsApp threads with customers, and the assistant that
+     * answers them (docs/25-WHATSAPP.md §19).
+     *
+     * THREE codes, split the way a center actually splits the work:
+     *
+     *   view      read threads within branch scope. A supervisor auditing what
+     *             the bot said to their customers needs this and nothing else.
+     *   reply     write in a thread. A different trust: these messages go out
+     *             from the center's own WhatsApp number, in the center's name.
+     *   takeover  silence the assistant and hold the thread, or hand it back.
+     *             Separate from `reply` because it changes who is ANSWERING
+     *             every future message, not just who wrote this one.
+     *
+     * No `conversation.close`: closing is the end of holding a thread, and a
+     * center that trusts somebody to take one over trusts them to finish it.
+     *
+     * The two config codes are deliberately coarse. `whatsapp.manage` writes
+     * provider credentials and is never granted to a receptionist;
+     * `ai.manage` changes how the assistant behaves for every customer. Neither
+     * is split further, because nobody has a job that is half of either.
+     */
+    case ConversationView = 'conversation.view';
+    case ConversationReply = 'conversation.reply';
+    case ConversationTakeover = 'conversation.takeover';
+    case WhatsAppManage = 'whatsapp.manage';
+    case AiManage = 'ai.manage';
+
     // Center administration
     case SettingsView = 'settings.view';
     case SettingsManage = 'settings.manage';
@@ -227,6 +344,8 @@ enum Permission: string
 
             self::MenuView, self::MenuManage => 'menu',
 
+            self::AppearanceView, self::AppearanceManage => 'appearance',
+
             self::MediaUpload => 'media',
 
             self::ResourceView, self::ResourceManage => 'resources',
@@ -244,6 +363,27 @@ enum Permission: string
             self::SaleView, self::SaleCreate, self::SaleFinalize, self::SaleAdjust,
             self::SaleVoid, self::InvoicePrint, self::CashierShiftManage,
             self::CashierShiftSupervise, self::ProductManage => 'sales',
+
+            self::PaymentView, self::PaymentCollect, self::PaymentRefund,
+            self::PaymentGatewayManage => 'payments',
+
+            self::FinanceView, self::ExpenseManage => 'finance',
+
+            self::LoyaltyView, self::LoyaltyManage, self::LoyaltyAdjust => 'loyalty',
+
+            self::MembershipView, self::MembershipManage => 'memberships',
+
+            self::PackageView, self::PackageManage => 'packages',
+
+            self::ReviewView, self::ReviewManage => 'reviews',
+
+            self::ReportView, self::ReportExport => 'reports',
+
+            self::PlatformSupportView, self::PlatformSupportManage => 'platform_support',
+
+            self::ConversationView, self::ConversationReply,
+            self::ConversationTakeover, self::WhatsAppManage,
+            self::AiManage => 'conversations',
 
             self::CustomerView, self::CustomerCreate, self::CustomerUpdate,
             self::CustomerArchive, self::CustomerContactView,

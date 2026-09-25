@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Database\Seeders;
 
+use App\Kernel\Platform\Authorization\PlatformRoleSynchroniser;
 use App\Kernel\SaaS\Models\Plan;
 use App\Kernel\SaaS\Models\PlatformSetting;
 use Illuminate\Database\Seeder;
@@ -22,8 +23,10 @@ final class ControlPlaneSeeder extends Seeder
 {
     public function run(): void
     {
+        app(PlatformRoleSynchroniser::class)->sync();
         $this->settings();
         $this->plans();
+        $this->call(LocalDevelopmentPlatformUserSeeder::class);
     }
 
     private function settings(): void

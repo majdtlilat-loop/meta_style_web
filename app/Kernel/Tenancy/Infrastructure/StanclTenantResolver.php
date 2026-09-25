@@ -7,6 +7,7 @@ namespace App\Kernel\Tenancy\Infrastructure;
 use App\Kernel\Identity\TenantApiToken;
 use App\Kernel\Tenancy\Contracts\TenantResolver;
 use App\Kernel\Tenancy\Exceptions\TenantResolutionConflict;
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Kernel\Tenancy\Tenant;
 use Illuminate\Http\Request;
 
@@ -26,6 +27,8 @@ use Illuminate\Http\Request;
  */
 final class StanclTenantResolver implements TenantResolver
 {
+    public function __construct(private readonly PlatformHosts $hosts) {}
+
     /**
      * @return array{0: ?Tenant, 1: ?string} the tenant and the source that found it
      */
@@ -132,6 +135,13 @@ final class StanclTenantResolver implements TenantResolver
 
     public function findByHost(string $host): ?Tenant
     {
+        // Only one-label center subdomains may enter tenant resolution. The
+        // corporate and Super Admin hosts, custom domains, nested hosts and
+        // reserved infrastructure names all remain platform/unknown hosts.
+        if ($this->hosts->centerSlugFromHost($host) === null) {
+            return null;
+        }
+
         $domain = DomainModel::query()
             ->where('domain', mb_strtolower($host))
             ->first();

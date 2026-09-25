@@ -92,11 +92,11 @@ final class SaveBranchSchedule
     private function authorize(Branch $branch, User $actingUser): void
     {
         if (! $actingUser->hasPermission(Permission::BranchManage)) {
-            throw new AuthorizationException('You may not manage branches.');
+            throw new AuthorizationException(__('manager_staff.errors.branch_manage_denied'));
         }
 
         if (! $actingUser->branchScope()->allows($branch->id)) {
-            throw new AuthorizationException('You may not manage that branch.');
+            throw new AuthorizationException(__('manager_staff.errors.branch_denied'));
         }
     }
 
@@ -115,7 +115,7 @@ final class SaveBranchSchedule
 
             if ($day < 0 || $day > 6) {
                 throw ValidationException::withMessages([
-                    'hours' => "Day of week must be 0–6; got {$day}.",
+                    'hours' => __('manager_staff.errors.hours_day'),
                 ]);
             }
 
@@ -127,7 +127,7 @@ final class SaveBranchSchedule
             // that would make the branch open for no time at all.
             if ($opens === $closes) {
                 throw ValidationException::withMessages([
-                    'hours' => "An interval cannot open and close at the same time ({$opens}).",
+                    'hours' => __('manager_staff.errors.hours_zero', ['time' => $opens]),
                 ]);
             }
 
@@ -172,7 +172,7 @@ final class SaveBranchSchedule
             for ($i = 1, $count = count($intervals); $i < $count; $i++) {
                 if ($intervals[$i][0] < $intervals[$i - 1][1]) {
                     throw ValidationException::withMessages([
-                        'hours' => "Opening hours overlap on day {$day}.",
+                        'hours' => __('manager_staff.errors.hours_overlap', ['day' => __('manager_staff.days.'.$day)]),
                     ]);
                 }
             }
@@ -188,15 +188,34 @@ final class SaveBranchSchedule
     private function validateExceptions(array $exceptions): array
     {
         $clean = [];
+        $seen = [];
 
         foreach ($exceptions as $exception) {
+            // One answer per date. Two rows for Eid — one closed, one open
+            // late — would leave Booking to pick one arbitrarily.
+            $date = \DateTimeImmutable::createFromFormat('!Y-m-d', (string) $exception['date']);
+
+            if ($date === false || $date->format('Y-m-d') !== $exception['date']) {
+                throw ValidationException::withMessages([
+                    'exceptions' => __('manager_staff.errors.exception_date'),
+                ]);
+            }
+
+            if (isset($seen[$exception['date']])) {
+                throw ValidationException::withMessages([
+                    'exceptions' => __('manager_staff.errors.exception_duplicate', ['date' => $exception['date']]),
+                ]);
+            }
+
+            $seen[$exception['date']] = true;
+
             if (! $exception['is_closed']) {
                 $opens = $exception['opens_at'] ?? null;
                 $closes = $exception['closes_at'] ?? null;
 
                 if (! is_string($opens) || ! is_string($closes)) {
                     throw ValidationException::withMessages([
-                        'exceptions' => 'A special-hours exception needs an opening and a closing time.',
+                        'exceptions' => __('manager_staff.errors.exception_times'),
                     ]);
                 }
 

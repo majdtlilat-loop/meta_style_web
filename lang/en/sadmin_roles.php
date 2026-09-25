@@ -1,0 +1,58 @@
+<?php
+
+declare(strict_types=1);
+
+return [
+    'title' => 'Roles & permissions',
+    'users' => 'Platform users',
+    'create' => 'New role',
+    'edit' => 'Edit',
+    'view' => 'View permissions',
+    'edit_title' => 'Edit :name',
+    'holders' => 'Who has it',
+    'archive' => 'Archive',
+    'restore' => 'Restore',
+    'delete' => 'Delete',
+    'current' => 'In use',
+    'archived' => 'Archived',
+    'system' => 'System role',
+    'empty' => 'No roles here.',
+    'system_note' => 'The Super Admin role always holds every platform permission and cannot be edited.',
+    'users_count' => '{0} Nobody|{1} :count person|[2,*] :count people',
+    'permissions_count' => '{1} :count permission|[2,*] :count permissions',
+    'no_template' => 'Start empty',
+    'select_group' => 'Select all',
+    'clear_group' => 'Clear',
+    'not_yours' => 'You do not hold this',
+    'fields' => [
+        'template' => 'Start from',
+        'name' => 'Role name',
+        'description' => 'Short description',
+        'permissions' => 'Permissions',
+        'reason' => 'Reason',
+    ],
+    'confirm' => [
+        'archive_title' => 'Archive :name?',
+        'archive_body' => 'The :count people holding it lose these permissions now. The role can be restored later.',
+        'restore_title' => 'Restore :name?',
+        'restore_body' => 'The role can be assigned again. Nobody gets it back automatically.',
+        'delete_title' => 'Delete :name?',
+        'delete_body' => 'Deletes this archived role permanently. Audit entries keep its name.',
+    ],
+    'saved' => [
+        'created' => 'Role created.',
+        'updated' => 'Role saved.',
+        'archive' => 'Role archived.',
+        'restore' => 'Role restored.',
+        'delete' => 'Role deleted.',
+    ],
+    'errors' => [
+        'name' => 'Give the role a name in English.',
+        'unknown' => 'Unknown permission.',
+        'empty' => 'Choose at least one permission.',
+        'escalation' => 'You cannot grant a permission you do not hold.',
+        'system' => 'System roles cannot be changed.',
+        'delete' => 'Only an archived role that nobody holds can be deleted.',
+        'reason' => 'Give a short reason.',
+    ],
+];

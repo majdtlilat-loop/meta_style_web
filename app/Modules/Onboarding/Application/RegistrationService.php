@@ -8,12 +8,19 @@ use App\Kernel\Audit\Actor;
 use App\Kernel\Audit\Audit;
 use App\Kernel\Audit\AuditEvent;
 use App\Kernel\Audit\Enums\AuditCategory;
+use App\Kernel\Contact\PhoneNumber;
 use App\Kernel\SaaS\Enums\RegistrationStatus;
 use App\Kernel\SaaS\Models\Registration;
+use App\Kernel\Tenancy\PlatformHosts;
+use App\Modules\Onboarding\Domain\Exceptions\CenterSlugUnavailable;
+use App\Modules\Onboarding\Domain\Exceptions\OwnerPhoneRequired;
 use App\Modules\Onboarding\Infrastructure\Jobs\ProvisionRegisteredTenant;
+use App\Modules\Onboarding\Mail\VerifyCenterEmail;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\URL;
 
 /**
  * Accepts a center's self-registration and hands the slow part to a queue.
@@ -37,7 +44,7 @@ use Illuminate\Support\Facades\Hash;
  */
 final class RegistrationService
 {
-    public function __construct(private readonly Audit $audit) {}
+    public function __construct(private readonly Audit $audit, private readonly PlatformHosts $hosts) {}
 
     /**
      * Accepts a registration and returns it with its one-time access token.
@@ -47,7 +54,7 @@ final class RegistrationService
      * risking serialisation. Callers hand it to the registering client and
      * forget it; nobody can ever reissue it (ADR-035).
      *
-     * @param  array{center_name: string, owner_name: string, owner_email?: string|null, owner_phone?: string|null, password: string, locale?: string|null, country?: string|null}  $input
+     * @param  array{center_name: string, center_slug?: string|null, owner_name: string, owner_email?: string|null, owner_phone: string, password: string, locale?: string|null, country?: string|null, plan_id?: int|null, cycle?: string|null}  $input
      * @return array{registration: Registration, access_token: string|null}
      */
     public function register(array $input, string $idempotencyKey): array
@@ -65,7 +72,20 @@ final class RegistrationService
             return ['registration' => $existing, 'access_token' => null];
         }
 
+        // The owner's phone is required (every center user account has one)
+        // and stored in E.164, the form the owner account will carry.
+        $ownerPhone = PhoneNumber::parse($input['owner_phone'], is_string($input['country'] ?? null) ? $input['country'] : null);
+        if (! $ownerPhone instanceof PhoneNumber) {
+            throw OwnerPhoneRequired::make();
+        }
+
         $passwordHash = Hash::make($input['password']);
+        $slug = $this->hosts->normalizeSlug((string) ($input['center_slug'] ?? $input['center_name']));
+
+        if (! $this->hosts->isValidCenterSlug($slug)
+            || Registration::query()->where('requested_slug', $slug)->whereNotIn('status', [RegistrationStatus::Cancelled, RegistrationStatus::Abandoned])->exists()) {
+            throw new CenterSlugUnavailable('The requested center address is unavailable.');
+        }
 
         $registration = new Registration;
 
@@ -73,15 +93,20 @@ final class RegistrationService
 
         $registration->forceFill([
             'idempotency_key' => $idempotencyKey,
-            'status' => RegistrationStatus::Preparing,
+            'status' => RegistrationStatus::PendingVerification,
             'center_name' => $input['center_name'],
+            'requested_slug' => $slug,
             'owner_name' => $input['owner_name'],
             'owner_email' => $input['owner_email'] ?? null,
-            'owner_phone' => $input['owner_phone'] ?? null,
+            'owner_phone' => $ownerPhone->e164,
             'locale' => $input['locale'] ?? config('localization.fallback', 'en'),
             'country' => $input['country'] ?? null,
+            'selected_plan_id' => $input['plan_id'] ?? null,
+            'options' => in_array($input['cycle'] ?? null, ['monthly', 'yearly'], true) ? ['cycle' => $input['cycle']] : null,
             'owner_password_hash' => $passwordHash,
             'credentials_expire_at' => $this->retryWindowCloses(),
+            'verification_sent_at' => now(),
+            'verification_expires_at' => now()->addMinutes($this->verificationMinutes()),
         ]);
 
         DB::connection('control')->transaction(static function () use ($registration): void {
@@ -104,9 +129,58 @@ final class RegistrationService
             ],
         ));
 
-        ProvisionRegisteredTenant::dispatch($registration->uuid);
+        $this->sendVerification($registration);
 
         return ['registration' => $registration, 'access_token' => $accessToken];
+    }
+
+    public function verifyEmail(Registration $registration): bool
+    {
+        if ($registration->email_verified_at !== null) {
+            return true;
+        }
+
+        if ($registration->status !== RegistrationStatus::PendingVerification
+            || $registration->verification_expires_at === null
+            || $registration->verification_expires_at->isPast()) {
+            return false;
+        }
+
+        DB::connection('control')->transaction(function () use ($registration): void {
+            $registration->forceFill([
+                'email_verified_at' => now(),
+                'status' => RegistrationStatus::Preparing,
+            ])->save();
+        });
+
+        $this->audit->record(new AuditEvent(
+            action: 'saas.registration.email_verified',
+            category: AuditCategory::Security,
+            actor: Actor::system('email-verification'),
+            targetType: Registration::class,
+            targetId: $registration->uuid,
+            targetLabel: $registration->center_name,
+        ));
+
+        ProvisionRegisteredTenant::dispatch($registration->uuid);
+
+        return true;
+    }
+
+    public function resendVerification(Registration $registration): bool
+    {
+        if ($registration->status !== RegistrationStatus::PendingVerification || $registration->owner_email === null) {
+            return false;
+        }
+
+        $registration->forceFill([
+            'verification_sent_at' => now(),
+            'verification_expires_at' => now()->addMinutes($this->verificationMinutes()),
+        ])->save();
+
+        $this->sendVerification($registration);
+
+        return true;
     }
 
     /**
@@ -225,5 +299,27 @@ final class RegistrationService
         $hours = config('metastyle.registration.retry_window_hours');
 
         return Carbon::now()->addHours(is_numeric($hours) ? (int) $hours : 24);
+    }
+
+    private function sendVerification(Registration $registration): void
+    {
+        if ($registration->owner_email === null) {
+            return;
+        }
+
+        $url = URL::temporarySignedRoute(
+            'registration.verify',
+            $registration->verification_expires_at ?? now()->addMinutes($this->verificationMinutes()),
+            ['uuid' => $registration->uuid],
+        );
+
+        Mail::to($registration->owner_email)->locale($registration->locale)->queue(new VerifyCenterEmail($registration, $url));
+    }
+
+    private function verificationMinutes(): int
+    {
+        $minutes = config('metastyle.registration.verification_minutes', 60);
+
+        return is_numeric($minutes) ? max(5, (int) $minutes) : 60;
     }
 }

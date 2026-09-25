@@ -12,8 +12,11 @@ use App\Modules\Booking\Application\Actions\ManageAppointmentNotes;
 use App\Modules\Booking\Domain\Models\Appointment;
 use App\Modules\Booking\Domain\Models\AppointmentItem;
 use App\Modules\Booking\Domain\Models\AppointmentItemAddon;
+use App\Modules\Booking\Domain\Models\ResourceReservation;
+use App\Modules\Booking\Domain\VerificationCode;
 use App\Modules\Customers\Application\CustomerPresenter;
 use App\Modules\Employees\Domain\Models\Employee;
+use SensitiveParameter;
 
 /**
  * The one shape an appointment is presented in, to any surface.
@@ -52,6 +55,9 @@ final class AppointmentPresenter
     {
         return [
             'uuid' => $appointment->uuid,
+            // What a person calls this booking out loud. Public and quotable;
+            // it authenticates nothing (docs/24-BOOKING-VERIFICATION.md §1).
+            'reference' => $appointment->reference,
             'status' => $appointment->status->value,
             'source' => $appointment->source->value,
 
@@ -69,6 +75,7 @@ final class AppointmentPresenter
 
             'branch' => [
                 'uuid' => $appointment->relationLoaded('branch') ? $appointment->branch?->uuid : null,
+                'name' => $appointment->relationLoaded('branch') ? $appointment->branch?->name->get() : null,
             ],
 
             'customer' => $appointment->relationLoaded('customer') && $appointment->customer !== null
@@ -127,6 +134,7 @@ final class AppointmentPresenter
     {
         return [
             'uuid' => $appointment->uuid,
+            'reference' => $appointment->reference,
             'status' => $appointment->status->value,
             'starts_at' => $appointment->starts_at->toIso8601String(),
             'ends_at' => $appointment->ends_at->toIso8601String(),
@@ -146,6 +154,34 @@ final class AppointmentPresenter
              * agreed, not the center's operational record of it.
              */
         ];
+    }
+
+    /**
+     * A booking shape plus the one-time verification code, when there is one to
+     * show.
+     *
+     * The ONLY place a raw code reaches a response body. It is added by the
+     * call that minted it and by nothing else: a later read of the same
+     * appointment produces the same shape WITHOUT the key, because the raw code
+     * no longer exists anywhere to produce (docs/24-BOOKING-VERIFICATION.md §11).
+     *
+     * Absent rather than null when there is nothing to show, so a client cannot
+     * read "the field was there and empty" as "this booking has no code".
+     *
+     * @param  array<string, mixed>  $shape
+     * @return array<string, mixed>
+     */
+    public function withVerificationCode(array $shape, #[SensitiveParameter] ?string $raw): array
+    {
+        if ($raw === null) {
+            return $shape;
+        }
+
+        // Grouped for reading aloud. The digest was taken over the normalised
+        // form, so the hyphen here changes nothing about verification.
+        $shape['verification_code'] = VerificationCode::format($raw);
+
+        return $shape;
     }
 
     /**
@@ -178,6 +214,25 @@ final class AppointmentPresenter
             if (! $forCustomer) {
                 $shape['employee_selection'] = $item->employee_selection->value;
                 $shape['note'] = $item->customer_note;
+
+                // Whether the booked person still works here — the calendar's
+                // "needs a new team member" answer, per service (§17).
+                if ($employee instanceof Employee) {
+                    $shape['employee']['active'] = $employee->status->isActive();
+                }
+
+                // Reserved rooms and devices, only when the caller loaded them:
+                // the snapshot NAME, as with the service (§3), and the uuid so a
+                // room view can place the booking.
+                if ($item->relationLoaded('resourceReservations')) {
+                    $shape['resources'] = $item->resourceReservations
+                        ->map(static fn (ResourceReservation $reservation): array => [
+                            'uuid' => $reservation->relationLoaded('resource') ? $reservation->resource?->uuid : null,
+                            'name' => $reservation->resource_name->get(),
+                            'type' => $reservation->resource_type_name->get(),
+                            'quantity' => $reservation->quantity,
+                        ])->values()->all();
+                }
             }
 
             return $shape;
@@ -221,6 +276,8 @@ final class AppointmentPresenter
                 'body' => $note->body,
                 'visibility' => $note->visibility->value,
                 'created_at' => $note->created_at?->toIso8601String(),
+                // A staff name, never a customer detail; only when loaded.
+                'author' => $note->relationLoaded('author') ? $note->author?->name : null,
             ],
             $this->notes->visibleTo($appointment, $viewer),
         );

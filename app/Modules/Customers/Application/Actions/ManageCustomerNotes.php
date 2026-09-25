@@ -42,13 +42,13 @@ final class ManageCustomerNotes
         NoteVisibility $visibility = NoteVisibility::Internal,
     ): InternalNote {
         if (! $actingUser->hasPermission(Permission::CustomerNoteManage)) {
-            throw new AuthorizationException('You may not write customer notes.');
+            throw new AuthorizationException(__('manager_customers.errors.may_not_write_notes'));
         }
 
         $body = trim($body);
 
         if ($body === '') {
-            throw ValidationException::withMessages(['body' => 'A note needs some text.']);
+            throw ValidationException::withMessages(['body' => __('manager_customers.errors.note_required')]);
         }
 
         $note = $customer->addInternalNote($body, $actingUser, $visibility);
@@ -75,13 +75,13 @@ final class ManageCustomerNotes
     public function delete(Customer $customer, InternalNote $note, User $actingUser): void
     {
         if (! $actingUser->hasPermission(Permission::CustomerNoteManage)) {
-            throw new AuthorizationException('You may not manage customer notes.');
+            throw new AuthorizationException(__('manager_customers.errors.may_not_manage_notes'));
         }
 
         // Scoped to the customer, so a note uuid from another record cannot be
         // deleted through this customer's endpoint.
         if ($note->owner_id !== $customer->id || $note->owner_type !== $customer->noteOwnerType()) {
-            throw new AuthorizationException('That note does not belong to this customer.');
+            throw new AuthorizationException(__('manager_customers.errors.note_not_theirs'));
         }
 
         $uuid = $note->uuid;

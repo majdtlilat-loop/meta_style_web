@@ -13,6 +13,7 @@ use App\Kernel\Contact\PhoneNumber;
 use App\Kernel\Identity\Models\User;
 use App\Kernel\Privacy\Fingerprint;
 use App\Modules\Customers\Domain\Data\CustomerInput;
+use App\Modules\Customers\Domain\Exceptions\DuplicateCustomerPhone;
 use App\Modules\Customers\Domain\Models\Customer;
 use App\Modules\Customers\Domain\Models\CustomerTag;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -45,14 +46,17 @@ final class SaveCustomer
         $this->validate($input);
 
         $existing = $customer;
-        $phone = PhoneNumber::parse($input->phone);
+        $phone = self::phone($input);
+        // The shared phone field sends the country apart from the number, so
+        // "as typed" alone would lose it; keep the readable international form.
+        $display = $phone === null ? null : ($input->phoneCountry !== null ? $phone->international() : $phone->display);
 
         $this->assertPhoneIsFree($phone?->e164, $existing);
 
         $before = $existing === null ? null : $this->snapshot($existing);
 
         /** @var Customer $saved */
-        $saved = DB::connection('tenant')->transaction(function () use ($input, $existing, $phone): Customer {
+        $saved = DB::connection('tenant')->transaction(function () use ($input, $existing, $phone, $display): Customer {
             $customer = $existing ?? new Customer;
 
             $wasOptedIn = $customer->exists && $customer->marketing_opt_in;
@@ -60,7 +64,7 @@ final class SaveCustomer
             $customer->forceFill([
                 'name' => $input->name,
                 'phone' => $phone?->e164,
-                'phone_display' => $phone?->display,
+                'phone_display' => $display,
                 'email' => $input->email === null ? null : mb_strtolower($input->email),
                 'preferred_locale' => $input->preferredLocale,
                 'date_of_birth' => $input->dateOfBirth,
@@ -114,7 +118,9 @@ final class SaveCustomer
 
         if (! $actingUser->hasPermission($needed)) {
             throw new AuthorizationException(
-                $customer === null ? 'You may not add customers.' : 'You may not change customers.'
+                $customer === null
+                    ? __('manager_customers.errors.may_not_create')
+                    : __('manager_customers.errors.may_not_update')
             );
         }
     }
@@ -125,14 +131,14 @@ final class SaveCustomer
     private function validate(CustomerInput $input): void
     {
         if ($input->name === '') {
-            throw ValidationException::withMessages(['name' => 'A customer needs a name.']);
+            throw ValidationException::withMessages(['name' => __('manager_customers.errors.name_required')]);
         }
 
         // A number that cannot be normalised cannot be an identity, and storing
         // it would create exactly the duplicate this design prevents.
-        if ($input->phone !== null && PhoneNumber::parse($input->phone) === null) {
+        if ($input->phone !== null && self::phone($input) === null) {
             throw ValidationException::withMessages([
-                'phone' => 'That does not look like a phone number.',
+                'phone' => __('manager_customers.errors.phone_invalid'),
             ]);
         }
     }
@@ -155,9 +161,18 @@ final class SaveCustomer
         // Named, so the person at the desk can open the existing record rather
         // than guessing. Safe: they already hold customer.create or
         // customer.update, so they may see customers.
-        throw ValidationException::withMessages([
-            'phone' => "That number already belongs to {$owner->name}.",
-        ]);
+        throw DuplicateCustomerPhone::ownedBy($owner, __('manager_customers.errors.phone_taken', ['name' => $owner->name]));
+    }
+
+    /**
+     * The number as an identity: read against the chosen country when the
+     * phone field sent one, parsed on its own otherwise (the API).
+     */
+    private static function phone(CustomerInput $input): ?PhoneNumber
+    {
+        return $input->phoneCountry !== null
+            ? PhoneNumber::fromParts($input->phoneCountry, $input->phone)
+            : PhoneNumber::parse($input->phone);
     }
 
     /**

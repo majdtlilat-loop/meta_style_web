@@ -148,7 +148,7 @@ final class AppointmentController extends Controller
             'note' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $appointment = $engine->book(
+        $booked = $engine->book(
             new BookingRequest(
                 branchUuid: (string) $data['branch'],
                 lines: BookingLine::listFromArray($data['services']),
@@ -163,7 +163,16 @@ final class AppointmentController extends Controller
         );
 
         return ApiResponse::data(
-            $presenter->detail($this->loaded($appointment), $user),
+            /*
+             * The verification code, in the clear, for this response only. The
+             * desk reads it to the customer; a later GET of the same
+             * appointment does not carry it, because by then the raw value no
+             * longer exists (docs/24-BOOKING-VERIFICATION.md §11).
+             */
+            $presenter->withVerificationCode(
+                $presenter->detail($this->loaded($booked->appointment), $user),
+                $booked->verificationCode,
+            ),
             201,
         );
     }

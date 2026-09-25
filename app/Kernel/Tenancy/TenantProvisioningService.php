@@ -53,14 +53,17 @@ final class TenantProvisioningService
 
     /**
      * @param  list<string>  $domains
+     * @param  string|null  $slug  the center's slug, which labels its database
+     *                             (ADR-106). Without one the database takes the
+     *                             neutral label — never anything from $name.
      *
      * @throws TenantProvisioningFailed
      */
-    public function provision(string $name, array $domains = [], ?Actor $actor = null): Tenant
+    public function provision(string $name, array $domains = [], ?Actor $actor = null, ?string $slug = null): Tenant
     {
         $actor ??= Actor::system('provisioning');
 
-        $tenant = $this->createRecord($name, $actor);
+        $tenant = $this->createRecord($name, $slug, $actor);
 
         return $this->runPipeline($tenant, $domains, $actor);
     }
@@ -80,14 +83,17 @@ final class TenantProvisioningService
     /**
      * Creates the control-plane record and allocates the database name.
      *
-     * The name comes from the database-assigned `sequence`, never from $name:
-     * a center called "Salon'; DROP DATABASE --" must not be able to influence
-     * a SQL identifier (ADR-024).
+     * The name is generated ONCE, here, and stored on the row: its label from
+     * the slug, reduced to a closed alphabet, and its unique suffix from the
+     * database-assigned `sequence`. The display name never reaches it — a
+     * center called "Salon'; DROP DATABASE --" with no slug is `tenant_center_…`
+     * (ADR-024, ADR-106). Nothing re-derives it later: a rename or a new
+     * address leaves the database where it is.
      */
-    private function createRecord(string $name, Actor $actor): TenantModel
+    private function createRecord(string $name, ?string $slug, Actor $actor): TenantModel
     {
         /** @var TenantModel $tenant */
-        $tenant = DB::connection('control')->transaction(function () use ($name): TenantModel {
+        $tenant = DB::connection('control')->transaction(function () use ($name, $slug): TenantModel {
             /** @var TenantModel $tenant */
             $tenant = TenantModel::create([
                 'name' => $name,
@@ -101,7 +107,7 @@ final class TenantProvisioningService
             $tenant->refresh();
 
             $tenant->forceFill([
-                'tenancy_db_name' => TenantDatabaseName::forSequence($tenant->sequence),
+                'tenancy_db_name' => TenantDatabaseName::generate($tenant->sequence, $slug),
             ])->save();
 
             return $tenant;

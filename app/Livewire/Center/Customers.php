@@ -5,26 +5,26 @@ declare(strict_types=1);
 namespace App\Livewire\Center;
 
 use App\Kernel\Authorization\Permission;
+use App\Kernel\Contact\PhoneNumber;
 use App\Kernel\Identity\Models\User;
+use App\Kernel\Localization\LanguageRegistry;
 use App\Kernel\Localization\TenantLocales;
-use App\Kernel\Notes\NoteVisibility;
+use App\Livewire\Center\Customers\Concerns\EditsCustomer;
 use App\Modules\Customers\Application\Actions\ArchiveCustomer;
-use App\Modules\Customers\Application\Actions\ManageCustomerNotes;
-use App\Modules\Customers\Application\Actions\SaveCustomer;
 use App\Modules\Customers\Application\CustomerPresenter;
 use App\Modules\Customers\Application\CustomerQuery;
-use App\Modules\Customers\Domain\Data\CustomerInput;
 use App\Modules\Customers\Domain\Models\Customer;
 use App\Modules\Customers\Domain\Models\CustomerTag;
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Contracts\View\View;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\On;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
 
 /**
- * The staff CRM: list, profile, edit, notes.
+ * The staff CRM list: find a customer, add one, open their profile.
  *
  * MASKING IS NOT DONE HERE. Every customer this screen renders has already been
  * through {@see CustomerPresenter}, the same one the API uses. A Blade template
@@ -32,15 +32,21 @@ use Livewire\WithPagination;
  * still leave the API and any future mobile client to reimplement the rule
  * (docs/06-AUTH-ROLES-PERMISSIONS.md §6).
  *
+ * THE SEARCH IS NEVER IN THE URL. It can be a phone number or an email, and a
+ * query string ends up in browser history, proxy logs and a shared link
+ * (docs/08-AUDIT-SECURITY.md: no PII in a URL). The filters, which are not
+ * personal, are.
+ *
  * Paginated always. A center with fifteen thousand customers must not be able
- * to load them all by opening a screen.
+ * to load them all by opening a screen. The profile — history, benefits,
+ * notes — is its own page ({@see Customers\Profile}).
  */
 #[Layout('components.layouts.app')]
 final class Customers extends Component
 {
+    use EditsCustomer;
     use WithPagination;
 
-    #[Url(as: 'q')]
     public string $search = '';
 
     #[Url]
@@ -52,182 +58,57 @@ final class Customers extends Component
     #[Url]
     public string $tag = '';
 
-    /** The profile currently open, by uuid. */
-    public ?string $viewing = null;
-
-    /** The record being edited, by uuid. Null while adding. */
-    public ?string $editing = null;
-
-    public bool $showForm = false;
-
-    public string $name = '';
-
-    public string $phone = '';
-
-    public string $email = '';
-
-    public string $preferredLocale = '';
-
-    public string $dateOfBirth = '';
-
-    public bool $allowOperational = true;
-
-    public bool $marketingOptIn = false;
-
-    /** @var list<string> */
-    public array $tagUuids = [];
-
-    public string $noteBody = '';
-
-    public string $noteVisibility = 'internal';
+    #[Url]
+    public string $visited = '';
 
     public string $notice = '';
 
-    public function updatedSearch(): void
+    public string $noticeTone = 'success';
+
+    public function updated(string $property): void
     {
-        $this->resetPage();
-    }
-
-    public function updatedArchived(): void
-    {
-        $this->resetPage();
-    }
-
-    public function open(string $uuid): void
-    {
-        $this->viewing = $uuid;
-        $this->showForm = false;
-    }
-
-    public function closeProfile(): void
-    {
-        $this->viewing = null;
-    }
-
-    public function create(): void
-    {
-        $this->resetForm();
-        $this->showForm = true;
-        $this->viewing = null;
-    }
-
-    public function edit(string $uuid): void
-    {
-        $customer = $this->findOrFail($uuid);
-
-        $this->editing = $uuid;
-        $this->name = $customer->name;
-
-        // Only prefilled for someone allowed to see it. Otherwise the edit form
-        // would hand back the very value the list masked.
-        $maySeeContact = $this->actor()->hasPermission(Permission::CustomerContactView);
-
-        $this->phone = $maySeeContact ? (string) $customer->phone_display : '';
-        $this->email = $maySeeContact ? (string) $customer->email : '';
-
-        $this->preferredLocale = (string) $customer->preferred_locale;
-        $this->dateOfBirth = $customer->date_of_birth?->toDateString() ?? '';
-        $this->allowOperational = $customer->allow_operational_messages;
-        $this->marketingOptIn = $customer->marketing_opt_in;
-        $this->tagUuids = $customer->tags->pluck('uuid')->all();
-
-        $this->showForm = true;
-        $this->viewing = null;
-    }
-
-    public function save(SaveCustomer $save): void
-    {
-        $this->validate([
-            'name' => ['required', 'string', 'max:190'],
-            'email' => ['nullable', 'email:rfc', 'max:190'],
-            'dateOfBirth' => ['nullable', 'date_format:Y-m-d'],
-        ]);
-
-        $existing = $this->editing === null ? null : $this->findOrFail($this->editing);
-
-        $mayEditContact = $this->actor()->hasPermission(Permission::CustomerContactView);
-
-        try {
-            $customer = $save(CustomerInput::fromArray([
-                'name' => $this->name,
-                // A viewer who cannot see contact details cannot change them
-                // either: submitting a blank form would otherwise erase a phone
-                // number they were never shown.
-                'phone' => $mayEditContact ? $this->phone : ($existing?->phone_display),
-                'email' => $mayEditContact ? $this->email : ($existing?->email),
-                'preferred_locale' => $this->preferredLocale,
-                'date_of_birth' => $this->dateOfBirth === '' ? null : $this->dateOfBirth,
-                'allow_operational_messages' => $this->allowOperational,
-                'marketing_opt_in' => $this->marketingOptIn,
-                'tags' => $this->tagUuids,
-            ]), $this->actor(), $existing);
-        } catch (AuthorizationException $e) {
-            $this->notice = $e->getMessage();
-
-            return;
-        } catch (ValidationException $e) {
-            $this->addError('phone', $e->getMessage());
-
-            return;
+        if (in_array($property, ['search', 'archived', 'registered', 'tag', 'visited'], true)) {
+            $this->resetPage();
         }
+    }
 
-        $this->notice = __('Saved.');
-        $this->resetForm();
-        $this->showForm = false;
-        $this->viewing = $customer->uuid;
+    public function clearFilters(): void
+    {
+        $this->reset(['search', 'archived', 'registered', 'tag', 'visited']);
+        $this->resetPage();
+    }
+
+    public function dismissNotice(): void
+    {
+        $this->notice = '';
+    }
+
+    /** The tags drawer changed a tag: redraw the filter and the form's choices. */
+    #[On('customer-tags-changed')]
+    public function tagsChanged(): void
+    {
+        if ($this->tag !== '' && ! CustomerTag::query()->active()->where('uuid', $this->tag)->exists()) {
+            $this->tag = '';
+        }
     }
 
     public function archive(string $uuid, ArchiveCustomer $archive): void
     {
-        try {
+        $this->act(function () use ($uuid, $archive): void {
             $archive($this->findOrFail($uuid), $this->actor());
-
-            $this->notice = __('Customer archived.');
-            $this->viewing = null;
-        } catch (AuthorizationException $e) {
-            $this->notice = $e->getMessage();
-        }
+            $this->flash(__('manager_customers.notices.archived'));
+        });
     }
 
     public function restore(string $uuid, ArchiveCustomer $archive): void
     {
-        try {
+        $this->act(function () use ($uuid, $archive): void {
             $archive->restore($this->findOrFail($uuid), $this->actor());
-
-            $this->notice = __('Customer restored.');
-        } catch (AuthorizationException $e) {
-            $this->notice = $e->getMessage();
-        }
+            $this->flash(__('manager_customers.notices.restored'));
+        });
     }
 
-    public function addNote(ManageCustomerNotes $notes): void
-    {
-        if ($this->viewing === null) {
-            return;
-        }
-
-        try {
-            $notes->add(
-                $this->findOrFail($this->viewing),
-                $this->noteBody,
-                $this->actor(),
-                NoteVisibility::from($this->noteVisibility),
-            );
-        } catch (AuthorizationException $e) {
-            $this->notice = $e->getMessage();
-
-            return;
-        } catch (ValidationException $e) {
-            $this->addError('noteBody', $e->getMessage());
-
-            return;
-        }
-
-        $this->noteBody = '';
-        $this->notice = __('Note added.');
-    }
-
-    public function render(CustomerQuery $query, CustomerPresenter $presenter, TenantLocales $locales): mixed
+    public function render(CustomerQuery $query, CustomerPresenter $presenter, TenantLocales $locales, LanguageRegistry $languages): View
     {
         $user = $this->actor();
 
@@ -240,51 +121,116 @@ final class Customers extends Component
             'archived' => $this->archived,
             'registered' => $this->registered === '' ? null : $this->registered === 'yes',
             'tag' => $this->tag === '' ? null : $this->tag,
+            'visited' => $this->visited === '' ? null : $this->visited === 'yes',
         ], $user, 25);
 
-        $profile = null;
+        /** @var list<Customer> $items */
+        $items = $page->items();
+        $lastVisits = $query->lastVisits(array_map(static fn (Customer $c): int => (int) $c->getKey(), $items), $user);
+        $locale = app()->getLocale();
 
-        if ($this->viewing !== null) {
-            $customer = Customer::query()->with(['tags', 'account', 'internalNotes'])
-                ->where('uuid', $this->viewing)->first();
+        $customers = array_map(function (Customer $customer) use ($presenter, $user, $lastVisits, $locale): array {
+            $last = $lastVisits[(int) $customer->getKey()] ?? null;
 
-            $profile = $customer === null ? null : $presenter->detail($customer, $user);
-        }
+            $row = $presenter->summary($customer, $user);
+
+            // Readable for a person; a masked value is already display-only.
+            if (! $row['contact_masked']) {
+                $row['phone'] = PhoneNumber::parse($row['phone'])?->international() ?? $row['phone'];
+            }
+
+            return $row + [
+                'initials' => self::initials($customer->name),
+                'profile_url' => route('center.customers.show', ['uuid' => $customer->uuid]),
+                'last_visit' => $last?->locale($locale)->diffForHumans(),
+                'last_visit_title' => $last?->locale($locale)->isoFormat('D MMM YYYY'),
+            ];
+        }, $items);
+
+        $tags = CustomerTag::query()->active()->get();
 
         return view('livewire.center.customers', [
             'page' => $page,
-            'customers' => array_map(
-                fn (Customer $c): array => $presenter->summary($c, $user),
-                $page->items(),
-            ),
-            'profile' => $profile,
-            'tags' => CustomerTag::query()->active()->get(),
-            'locales' => $locales->enabled(),
+            'customers' => $customers,
+            'hasFilters' => $this->search !== '' || $this->registered !== '' || $this->tag !== '' || $this->visited !== '' || $this->archived,
+            'tagOptions' => $tags->map(fn (CustomerTag $t): array => ['uuid' => $t->uuid, 'name' => $t->name->get()])->values()->all(),
+            'languageOptions' => self::languageOptions($locales, $languages, $this->preferredLocale),
             'canSeeContact' => $user->hasPermission(Permission::CustomerContactView),
             'canCreate' => $user->hasPermission(Permission::CustomerCreate),
             'canUpdate' => $user->hasPermission(Permission::CustomerUpdate),
             'canArchive' => $user->hasPermission(Permission::CustomerArchive),
-            'canViewNotes' => $user->hasPermission(Permission::CustomerNoteView),
-            'canManageNotes' => $user->hasPermission(Permission::CustomerNoteManage),
-        ]);
+            'canManageTags' => $user->hasPermission(Permission::CustomerTagManage),
+            'today' => now()->toDateString(),
+        ])->title(__('ui.manager_nav.items.customers'));
+    }
+
+    /**
+     * The content languages offered in the form: the center's enabled ones,
+     * plus a customer's stored choice the center has since disabled — so an
+     * unrelated edit never silently drops it.
+     *
+     * @return list<array{code: string, label: string}>
+     */
+    public static function languageOptions(TenantLocales $locales, LanguageRegistry $languages, string $current): array
+    {
+        $codes = $locales->enabled();
+
+        if ($current !== '' && ! in_array($current, $codes, true) && $languages->supports($current)) {
+            $codes[] = $current;
+        }
+
+        return array_map(static fn (string $code): array => [
+            'code' => $code,
+            'label' => $languages->shortLabel($code).' · '.$languages->nativeName($code),
+        ], $codes);
+    }
+
+    public static function initials(string $name): string
+    {
+        $name = trim($name);
+
+        return $name === '' ? '?' : mb_strtoupper(mb_substr($name, 0, 1));
+    }
+
+    protected function customerSaved(Customer $customer, bool $created): void
+    {
+        if ($created) {
+            // Straight to the new record: the desk usually books or checks the
+            // person in next.
+            $this->redirectRoute('center.customers.show', ['uuid' => $customer->uuid], navigate: true);
+
+            return;
+        }
+
+        $this->flash(__('manager_customers.notices.saved'));
+    }
+
+    protected function formActor(): User
+    {
+        return $this->actor();
+    }
+
+    private function act(callable $work): void
+    {
+        try {
+            $work();
+        } catch (AuthorizationException $refused) {
+            $this->flash($refused->getMessage(), 'danger');
+        }
+    }
+
+    private function flash(string $message, string $tone = 'success'): void
+    {
+        $this->notice = $message;
+        $this->noticeTone = $tone;
     }
 
     private function findOrFail(string $uuid): Customer
     {
-        return Customer::query()->with('tags')->where('uuid', $uuid)->firstOrFail();
-    }
+        /** @var Customer $customer */
+        $customer = Customer::query()->where('uuid', $uuid)->firstOrFail();
 
-    private function resetForm(): void
-    {
-        $this->editing = null;
-        $this->name = '';
-        $this->phone = '';
-        $this->email = '';
-        $this->preferredLocale = '';
-        $this->dateOfBirth = '';
-        $this->allowOperational = true;
-        $this->marketingOptIn = false;
-        $this->tagUuids = [];
+        return $customer;
     }
 
     private function actor(): User

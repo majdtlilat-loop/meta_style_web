@@ -23,12 +23,14 @@ final readonly class AvailabilityQuery
 {
     /**
      * @param  list<BookingLine>  $lines
+     * @param  string|null  $movingAppointmentUuid  set only by {@see forMove()}
      */
     public function __construct(
         public string $branchUuid,
         public array $lines,
         public string $fromDate,
         public string $toDate,
+        public ?string $movingAppointmentUuid = null,
     ) {}
 
     /**
@@ -37,5 +39,30 @@ final readonly class AvailabilityQuery
     public static function forDay(string $branchUuid, array $lines, string $date): self
     {
         return new self($branchUuid, $lines, $date, $date);
+    }
+
+    /**
+     * "Where could this EXISTING appointment move to?"
+     *
+     * No lines: a move is not a new booking and must not be re-resolved from
+     * the catalog. The engine lays the visit out from its STORED items — their
+     * durations, their offsets from the visit's start, the named-employee
+     * requirement and the rooms already held — which is exactly what
+     * `RescheduleAppointment` re-checks under the lock. And it ignores the
+     * appointment's own current time, so moving a sixty-minute booking by
+     * thirty minutes is not refused by the copy of itself it is moving away
+     * from (docs/15-BOOKING.md §4).
+     *
+     * Staff only: the public channel refuses it. Still ADVISORY, like every
+     * slot — the reschedule decides.
+     */
+    public static function forMove(string $branchUuid, string $appointmentUuid, string $fromDate, ?string $toDate = null): self
+    {
+        return new self($branchUuid, [], $fromDate, $toDate ?? $fromDate, $appointmentUuid);
+    }
+
+    public function isMove(): bool
+    {
+        return $this->movingAppointmentUuid !== null;
     }
 }

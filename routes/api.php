@@ -4,27 +4,47 @@ declare(strict_types=1);
 
 use App\Http\Controllers\Api\AppointmentController;
 use App\Http\Controllers\Api\AvailabilityBlockController;
+use App\Http\Controllers\Api\BookingVerificationController;
 use App\Http\Controllers\Api\BranchController;
 use App\Http\Controllers\Api\CashierShiftController;
 use App\Http\Controllers\Api\CatalogController;
+use App\Http\Controllers\Api\ConversationController;
 use App\Http\Controllers\Api\CustomerAuthController;
+use App\Http\Controllers\Api\CustomerBenefitsController;
 use App\Http\Controllers\Api\CustomerBookingController;
 use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\CustomerNotificationController;
+use App\Http\Controllers\Api\CustomerReviewController;
 use App\Http\Controllers\Api\EmployeeController;
+use App\Http\Controllers\Api\FinanceController;
+use App\Http\Controllers\Api\GatewayAccountController;
 use App\Http\Controllers\Api\JourneyController;
+use App\Http\Controllers\Api\LoyaltyController;
 use App\Http\Controllers\Api\MeController;
+use App\Http\Controllers\Api\MembershipController;
 use App\Http\Controllers\Api\MenuAdminController;
+use App\Http\Controllers\Api\PackageController;
+use App\Http\Controllers\Api\PaymentController;
+use App\Http\Controllers\Api\PaymentWebhookController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\PublicBookingController;
 use App\Http\Controllers\Api\PublicInvoiceController;
 use App\Http\Controllers\Api\PublicMenuController;
+use App\Http\Controllers\Api\PublicPaymentController;
 use App\Http\Controllers\Api\PublicQueueDisplayController;
 use App\Http\Controllers\Api\QueueController;
+use App\Http\Controllers\Api\RayanSettingsController;
 use App\Http\Controllers\Api\RegistrationController;
+use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\ResourceController;
+use App\Http\Controllers\Api\ReviewController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SalesController;
+use App\Http\Controllers\Api\StaffNotificationController;
 use App\Http\Controllers\Api\TokenController;
+use App\Http\Controllers\Api\UsageController;
+use App\Http\Controllers\Api\WhatsAppAccountController;
+use App\Http\Controllers\Api\WhatsAppWebhookController;
 use App\Kernel\Http\ApiResponse;
 use App\Kernel\Http\Middleware\EnsureIdempotency;
 use Illuminate\Support\Facades\Route;
@@ -141,6 +161,39 @@ Route::prefix('customer')->name('api.customer.')
 
         Route::post('appointments/{uuid}/cancel', [CustomerBookingController::class, 'cancel'])
             ->name('appointments.cancel');
+
+        // Their own points, memberships and packages — an allow-list, read-only
+        // (docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md §19).
+        Route::get('benefits', [CustomerBenefitsController::class, 'index'])->name('benefits');
+
+        /*
+         * Phase 12. Their own inbox, and their own review invitations.
+         *
+         * A signed-in customer needs no capability secret: their invitation is
+         * resolved by uuid against their own customer record, which is why a
+         * review invitation in an inbox never carries one
+         * (docs/22-REVIEWS.md §40).
+         */
+        Route::get('notifications', [CustomerNotificationController::class, 'index'])->name('notifications.index');
+        Route::get('notifications/unread', [CustomerNotificationController::class, 'unreadCount'])->name('notifications.unread');
+        Route::post('notifications/read-all', [CustomerNotificationController::class, 'markAllRead'])->name('notifications.read_all');
+        Route::post('notifications/{uuid}/read', [CustomerNotificationController::class, 'markRead'])->name('notifications.read');
+        Route::get('notifications/preferences', [CustomerNotificationController::class, 'preferences'])->name('notifications.preferences');
+        Route::put('notifications/preferences', [CustomerNotificationController::class, 'updatePreference'])->name('notifications.preferences.update');
+
+        /*
+         * Phase 13. A new verification code for a booking that is theirs.
+         *
+         * The OLD code stops working immediately, which is the point: a
+         * customer asks for a new one when they think somebody has seen the
+         * previous one. The raw value is in this response and nowhere else
+         * (docs/24-BOOKING-VERIFICATION.md §§8).
+         */
+        Route::post('appointments/{uuid}/verification-code', [BookingVerificationController::class, 'customer'])
+            ->name('appointments.verification_code');
+
+        Route::get('reviews', [CustomerReviewController::class, 'index'])->name('reviews.index');
+        Route::post('reviews/{uuid}', [CustomerReviewController::class, 'submit'])->name('reviews.submit');
     });
 
 /*
@@ -159,10 +212,9 @@ Route::prefix('customer')->name('api.customer.')
 | Public menu
 |--------------------------------------------------------------------------
 |
-| Guest-accessible. The center is resolved from its public key in the path by
-| `public.tenant` — the one place a tenant identifier legitimately comes from
-| the URL, because a customer scanning a QR code has no session, no token and
-| usually no dedicated host (ADR-036).
+| Guest-accessible. The center is resolved from its registered subdomain by
+| `public.tenant`; the matching slug in the path names the public resource but
+| is never trusted as a tenant-resolution source (ADR-076).
 |
 | THIS GROUP MUST NEVER GAIN AN AUTH MIDDLEWARE. A public key in a URL must not
 | become a way to act as a center. Enforced by
@@ -242,7 +294,75 @@ Route::prefix('invoices/{center}')->name('api.invoices.')
     ->middleware(['public.tenant', 'locale', 'throttle:public-invoice'])
     ->group(function (): void {
         Route::get('{token}', PublicInvoiceController::class)->name('public');
+
+        // What is paid and left, and which online options the branch offers.
+        // Allow-listed (docs/19-PAYMENTS.md §§29, 58).
+        Route::get('{token}/payment', [PublicPaymentController::class, 'options'])->name('payment');
     });
+
+/*
+|--------------------------------------------------------------------------
+| Paying an invoice online, from its link
+|--------------------------------------------------------------------------
+|
+| The share secret is the authority; the server decides the amount. Its own,
+| lower throttle: every attempt reaches a payment provider.
+|
+*/
+
+Route::post('invoices/{center}/{token}/payments', [PublicPaymentController::class, 'store'])
+    ->middleware(['public.tenant', 'locale', 'throttle:public-payment'])
+    ->name('api.invoices.payments.store');
+
+/*
+|--------------------------------------------------------------------------
+| Payment provider callbacks
+|--------------------------------------------------------------------------
+|
+| docs/19-PAYMENTS.md §§21–24.
+|
+| The center by its public key, the gateway account by its public uuid —
+| neither a secret, and neither enough to settle anything: a callback is
+| believed only after the provider's signature is verified or its status is
+| read back with the center's own credentials. No auth middleware, ever. No
+| entitlement either — money already moving cannot depend on today's plan.
+|
+*/
+
+Route::post('payments/{center}/gateways/{account}/webhook', PaymentWebhookController::class)
+    ->middleware(['public.tenant', 'locale', 'throttle:payment-webhook'])
+    ->name('api.payments.webhook');
+
+/*
+|--------------------------------------------------------------------------
+| WhatsApp provider callbacks
+|--------------------------------------------------------------------------
+|
+| docs/25-WHATSAPP.md §§8.
+|
+| The center by its public key, the WhatsApp account by its public uuid --
+| neither a secret, and neither enough to do anything. An inbound notification
+| is believed only after its signature verifies against the center's own app
+| secret, and nothing before that point touches a customer, a conversation or
+| the assistant.
+|
+| No auth middleware, ever. No entitlement either: a center that has stopped
+| paying still receives delivery callbacks for messages already in flight, and
+| refusing them would strand outbound rows as `pending` forever.
+|
+| The GET is Meta's registration handshake and echoes a challenge; the POST is
+| every notification. Both are throttled per ACCOUNT rather than per address,
+| because a provider sends them and an attacker can rotate addresses.
+|
+*/
+
+Route::get('whatsapp/{center}/accounts/{account}/webhook', [WhatsAppWebhookController::class, 'verify'])
+    ->middleware(['public.tenant', 'locale', 'throttle:whatsapp-webhook'])
+    ->name('api.whatsapp.verify');
+
+Route::post('whatsapp/{center}/accounts/{account}/webhook', WhatsAppWebhookController::class)
+    ->middleware(['public.tenant', 'locale', 'throttle:whatsapp-webhook'])
+    ->name('api.whatsapp.webhook');
 
 Route::prefix('tenant')->name('api.tenant.')
     ->middleware(['tenant', 'auth:sanctum', 'locale', 'throttle:tenant-api'])
@@ -471,11 +591,14 @@ Route::prefix('tenant')->name('api.tenant.')
         | a custom line or an override, and both need `sale.adjust` plus a
         | reason.
         |
-        | THERE IS NO PAYMENT ENDPOINT. Settlement is Phase 10.
+        | Sales has no payment endpoint of its own: collecting money against an
+        | invoice is the Payments module, below (Phase 10).
         |
         */
         Route::get('sales', [SalesController::class, 'index'])->name('sales.index');
         Route::post('sales', [SalesController::class, 'store'])->name('sales.store');
+        // Before `sales/{uuid}`, which would otherwise swallow it.
+        Route::get('sales/offerings', [SalesController::class, 'offerings'])->name('sales.offerings');
         Route::get('sales/{uuid}', [SalesController::class, 'show'])->name('sales.show');
         Route::delete('sales/{uuid}', [SalesController::class, 'destroy'])->name('sales.discard');
 
@@ -513,8 +636,173 @@ Route::prefix('tenant')->name('api.tenant.')
         Route::put('products/{uuid}', [ProductController::class, 'update'])->name('products.update');
         Route::delete('products/{uuid}', [ProductController::class, 'archive'])->name('products.archive');
 
+        /*
+        |--------------------------------------------------------------------
+        | Payments — money collected against invoices, and returned
+        |--------------------------------------------------------------------
+        |
+        | docs/19-PAYMENTS.md §57.
+        |
+        | Cash and manual transfers need `pos`; online payments and gateway
+        | accounts need `payments`; reading needs neither. The Actions check —
+        | these routes only validate and present.
+        |
+        */
+        Route::get('invoices/{invoiceUuid}/payments', [PaymentController::class, 'settlement'])->name('payments.settlement');
+        Route::post('invoices/{invoiceUuid}/payments', [PaymentController::class, 'collect'])->name('payments.collect');
+        Route::get('payments/{uuid}', [PaymentController::class, 'show'])->name('payments.show');
+        Route::post('payments/{uuid}/refresh', [PaymentController::class, 'refresh'])->name('payments.refresh');
+        Route::post('payments/{uuid}/cancel', [PaymentController::class, 'cancel'])->name('payments.cancel');
+        Route::post('payments/{uuid}/refunds', [PaymentController::class, 'refund'])->name('payments.refunds.store');
+        Route::get('refunds/{uuid}', [PaymentController::class, 'showRefund'])->name('refunds.show');
+
+        Route::get('branches/{branchUuid}/payment-gateways', [GatewayAccountController::class, 'index'])->name('payment_gateways.index');
+        Route::put('branches/{branchUuid}/payment-gateways/{provider}', [GatewayAccountController::class, 'configure'])
+            ->name('payment_gateways.configure');
+        Route::post('payment-gateways/{uuid}/enable', [GatewayAccountController::class, 'enable'])->name('payment_gateways.enable');
+        Route::post('payment-gateways/{uuid}/disable', [GatewayAccountController::class, 'disable'])->name('payment_gateways.disable');
+
+        /*
+        |--------------------------------------------------------------------
+        | Finance — the center's ledger, expenses and drawer counts
+        |--------------------------------------------------------------------
+        |
+        | docs/20-FINANCE.md §57. Center finance, never Meta Style's own
+        | billing: nothing here reads or writes the control plane.
+        |
+        */
+        Route::get('finance/dashboard', [FinanceController::class, 'dashboard'])->name('finance.dashboard');
+        Route::get('finance/ledger', [FinanceController::class, 'ledger'])->name('finance.ledger');
+
+        Route::get('finance/expense-categories', [FinanceController::class, 'categories'])->name('finance.categories.index');
+        Route::post('finance/expense-categories', [FinanceController::class, 'storeCategory'])->name('finance.categories.store');
+        Route::put('finance/expense-categories/{uuid}', [FinanceController::class, 'updateCategory'])->name('finance.categories.update');
+        Route::delete('finance/expense-categories/{uuid}', [FinanceController::class, 'archiveCategory'])->name('finance.categories.archive');
+
+        Route::get('finance/expenses', [FinanceController::class, 'expenses'])->name('finance.expenses.index');
+        Route::post('finance/expenses', [FinanceController::class, 'storeExpense'])->name('finance.expenses.store');
+        Route::post('finance/expenses/{uuid}/void', [FinanceController::class, 'voidExpense'])->name('finance.expenses.void');
+
+        Route::get('cashier-shifts/{uuid}/expected-cash', [FinanceController::class, 'expectedCash'])->name('cashier_shifts.expected_cash');
+        Route::post('cashier-shifts/{uuid}/close-with-count', [FinanceController::class, 'closeShift'])->name('cashier_shifts.close_with_count');
+
         Route::get('roles', [RoleController::class, 'index'])->name('roles.index');
         Route::put('roles/{uuid}/permissions', [RoleController::class, 'updatePermissions'])
             ->name('roles.permissions');
         Route::put('users/{uuid}/roles', [RoleController::class, 'assignToUser'])->name('users.roles');
+
+        /*
+        |--------------------------------------------------------------------
+        | Loyalty, memberships and service packages
+        |--------------------------------------------------------------------
+        |
+        | docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md §27.
+        |
+        | Memberships and packages are SOLD through `sales/{uuid}/items` like
+        | any line; nothing here takes money. Using a benefit is a change to a
+        | draft sale, so it lives under the sale and its line. The Actions check
+        | the entitlement and the permission — a downgrade stops selling and
+        | earning, never reading or using what a customer already paid for.
+        |
+        */
+        Route::get('loyalty/program', [LoyaltyController::class, 'program'])->name('loyalty.program');
+        Route::put('loyalty/program', [LoyaltyController::class, 'configure'])->name('loyalty.configure');
+        Route::post('loyalty/tiers', [LoyaltyController::class, 'storeTier'])->name('loyalty.tiers.store');
+        Route::put('loyalty/tiers/{uuid}', [LoyaltyController::class, 'updateTier'])->name('loyalty.tiers.update');
+        Route::delete('loyalty/tiers/{uuid}', [LoyaltyController::class, 'archiveTier'])->name('loyalty.tiers.archive');
+        Route::get('customers/{uuid}/loyalty', [LoyaltyController::class, 'customer'])->name('customers.loyalty');
+        Route::post('customers/{uuid}/loyalty/adjustments', [LoyaltyController::class, 'adjust'])->name('customers.loyalty.adjust');
+        Route::post('sales/{uuid}/loyalty-redemption', [LoyaltyController::class, 'redeem'])->name('sales.loyalty.redeem');
+        Route::delete('sales/{uuid}/loyalty-redemption', [LoyaltyController::class, 'withdraw'])->name('sales.loyalty.withdraw');
+
+        Route::get('membership-plans', [MembershipController::class, 'plans'])->name('membership_plans.index');
+        Route::post('membership-plans', [MembershipController::class, 'store'])->name('membership_plans.store');
+        Route::put('membership-plans/{uuid}', [MembershipController::class, 'update'])->name('membership_plans.update');
+        Route::delete('membership-plans/{uuid}', [MembershipController::class, 'archive'])->name('membership_plans.archive');
+        Route::get('customers/{uuid}/memberships', [MembershipController::class, 'customer'])->name('customers.memberships');
+        Route::post('customer-memberships/{uuid}/cancel', [MembershipController::class, 'cancel'])->name('customer_memberships.cancel');
+        Route::post('sales/{uuid}/items/{lineUuid}/membership-benefit', [MembershipController::class, 'apply'])->name('sales.items.membership.apply');
+        Route::delete('sales/{uuid}/items/{lineUuid}/membership-benefit', [MembershipController::class, 'withdraw'])->name('sales.items.membership.withdraw');
+
+        Route::get('package-definitions', [PackageController::class, 'definitions'])->name('package_definitions.index');
+        Route::post('package-definitions', [PackageController::class, 'store'])->name('package_definitions.store');
+        Route::put('package-definitions/{uuid}', [PackageController::class, 'update'])->name('package_definitions.update');
+        Route::delete('package-definitions/{uuid}', [PackageController::class, 'archive'])->name('package_definitions.archive');
+        Route::get('customers/{uuid}/packages', [PackageController::class, 'customer'])->name('customers.packages');
+        Route::post('customer-packages/{uuid}/cancel', [PackageController::class, 'cancel'])->name('customer_packages.cancel');
+        Route::post('sales/{uuid}/items/{lineUuid}/package', [PackageController::class, 'apply'])->name('sales.items.package.apply');
+        Route::delete('sales/{uuid}/items/{lineUuid}/package', [PackageController::class, 'withdraw'])->name('sales.items.package.withdraw');
+
+        /*
+         * Phase 12. Reviews: what customers said, the rating summary, and the
+         * two moderation actions. Branch scope is applied by the query, never
+         * by the filters a caller sends (docs/22-REVIEWS.md §§23, 50).
+         *
+         * `reviews/invitations/{journey}` is the only place a plaintext review
+         * secret leaves the system, and it returns it ONCE — there is no read
+         * that could show it again (§5).
+         */
+        Route::get('reviews', [ReviewController::class, 'index'])->name('reviews.index');
+        Route::get('reviews/summary', [ReviewController::class, 'summary'])->name('reviews.summary');
+        Route::get('reviews/{uuid}', [ReviewController::class, 'show'])->name('reviews.show');
+        Route::post('reviews/{uuid}/hide', [ReviewController::class, 'hide'])->name('reviews.hide');
+        Route::post('reviews/{uuid}/unhide', [ReviewController::class, 'unhide'])->name('reviews.unhide');
+        Route::post('reviews/{uuid}/flag', [ReviewController::class, 'flag'])->name('reviews.flag');
+        Route::post('reviews/invitations/{journeyUuid}', [ReviewController::class, 'reissue'])->name('reviews.invitations.reissue');
+
+        /* Phase 14 reports: Standard always reads Primary; Advanced always reads Reporting. */
+        Route::get('reports/{report}', [ReportController::class, 'standard'])->name('reports.show');
+        Route::get('advanced-reports/{report}', [ReportController::class, 'advanced'])->name('advanced_reports.show');
+        Route::post('advanced-reports/{report}/analyze', [ReportController::class, 'analyze'])
+            ->middleware('throttle:report-analysis')
+            ->name('advanced_reports.analyze');
+
+        /*
+         * The signed-in staff member's OWN inbox. No permission and no
+         * entitlement: everybody has one, and nobody reads anybody else's
+         * (docs/23-NOTIFICATIONS.md §16).
+         */
+        Route::get('notifications', [StaffNotificationController::class, 'index'])->name('notifications.index');
+        Route::get('notifications/unread', [StaffNotificationController::class, 'unreadCount'])->name('notifications.unread');
+        Route::post('notifications/read-all', [StaffNotificationController::class, 'markAllRead'])->name('notifications.read_all');
+        Route::post('notifications/{uuid}/read', [StaffNotificationController::class, 'markRead'])->name('notifications.read');
+        Route::get('notifications/preferences', [StaffNotificationController::class, 'preferences'])->name('notifications.preferences');
+        Route::put('notifications/preferences', [StaffNotificationController::class, 'updatePreference'])->name('notifications.preferences.update');
+
+        /*
+        |------------------------------------------------------------------
+        | Phase 13 -- conversations, the connection, the assistant, usage
+        |------------------------------------------------------------------
+        |
+        | docs/25-WHATSAPP.md §§19, docs/27-RAYAN.md §§5.
+        |
+        | Every one of these authorises inside its Action or controller by
+        | PERMI§§ION and BRANCH; the group's middleware only establishes which
+        | center and which user (ADR-029).
+        |
+        */
+
+        Route::get('conversations', [ConversationController::class, 'index'])->name('conversations.index');
+        Route::get('conversations/{uuid}', [ConversationController::class, 'show'])->name('conversations.show');
+        Route::post('conversations/{uuid}/reply', [ConversationController::class, 'reply'])->name('conversations.reply');
+        Route::post('conversations/{uuid}/takeover', [ConversationController::class, 'takeOver'])->name('conversations.takeover');
+        Route::post('conversations/{uuid}/return-to-assistant', [ConversationController::class, 'returnToAssistant'])->name('conversations.return');
+        Route::post('conversations/{uuid}/close', [ConversationController::class, 'close'])->name('conversations.close');
+
+        Route::get('whatsapp/account', [WhatsAppAccountController::class, 'show'])->name('whatsapp.account.show');
+        Route::put('whatsapp/account', [WhatsAppAccountController::class, 'update'])->name('whatsapp.account.update');
+
+        Route::get('rayan/settings', [RayanSettingsController::class, 'show'])->name('rayan.settings.show');
+        Route::put('rayan/settings', [RayanSettingsController::class, 'update'])->name('rayan.settings.update');
+
+        // The manager's usage dashboard, behind `settings.view` (§§61).
+        Route::get('usage', UsageController::class)->name('usage');
+
+        /*
+         * Staff issuing or re-issuing a booking's verification code. Audited,
+         * branch-scoped, and the raw code is returned exactly once.
+         */
+        Route::post('appointments/{uuid}/verification-code', [BookingVerificationController::class, 'staff'])
+            ->name('appointments.verification_code');
+
     });

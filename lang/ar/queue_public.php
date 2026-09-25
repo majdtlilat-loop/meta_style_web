@@ -36,4 +36,16 @@ return [
     'destination' => 'التوجه إلى',
     'issued_at' => 'وقت الإصدار',
     'thank_you' => 'شكراً لانتظاركم.',
+
+    // The state beside a recent call, and the Manager preview's sample.
+    'state_called' => 'تم النداء',
+    'state_serving' => 'قيد الخدمة',
+    'sample_call' => 'مثال',
+
+    // Screen controls: this screen only, never the queue.
+    'start' => 'تشغيل الشاشة',
+    'start_hint' => 'لمسة واحدة تشغّل الصوت وملء الشاشة.',
+    'controls' => 'أدوات الشاشة',
+    'fullscreen' => 'ملء الشاشة',
+    'exit_fullscreen' => 'الخروج من ملء الشاشة',
 ];

@@ -163,11 +163,23 @@ staff.deactivate      role.delete
 staff.access.manage   role.permissions.manage
 ```
 
-Later phases added `appointment.*`, `journey.*`, `queue.*` and — in Phase 9 —
+Later phases added `appointment.*`, `journey.*`, `queue.*`, in Phase 9
 `sale.*`, `invoice.print`, `cashier_shift.*` and `product.manage` (catalog 71,
-docs/18-SALES.md §35). `finance.*`, `payment.*` and `reports.*` arrive with the
-features that check them. A catalog full of unenforceable codes is a list of
-promises — and it makes the Owner role look complete when it is not.
+docs/18-SALES.md §35), and in Phase 10 `payment.view`, `payment.collect`,
+`payment.refund`, `payment.gateway.manage`, `finance.view` and `expense.manage`
+(catalog 77, docs/20-FINANCE.md §Permissions — Manager holds all six, Cashier
+`payment.view` and `payment.collect`), and in Phase 11 `loyalty.view`,
+`loyalty.manage`, `loyalty.adjust`, `membership.view`, `membership.manage`,
+`package.view` and `package.manage` (catalog 84, docs/21 §20 — Manager holds all
+seven; Host and Cashier the three `*.view`, which with the till's own
+`sale.create` lets them redeem and apply what a customer already has), and in
+Phase 12 `review.view` and `review.manage` (catalog 86, docs/22 §19 — Manager
+holds both, Host reads). Two codes and not six: a rating with its review hidden
+is a number nobody can act on, and "may read service ratings but not employee
+ratings" is not a job anybody has. The notification inbox needs NO permission —
+everybody who can sign in has one, and nobody can read anybody else's.
+`reports.*` arrives with the features that check it. A catalog full of unenforceable codes is a list of promises — and it
+makes the Owner role look complete when it is not.
 
 Naming: `{area}.{resource}.{action}` or `{area}.{action}`, lowercase, dotted.
 
@@ -188,8 +200,9 @@ user_branches         user_id, branch_id             ← branch scoping
 users                 ..., all_branches (bool), is_owner (bool)
 ```
 
-System roles seeded at provisioning (`is_system = true`, not deletable, but
-their permission sets are editable by the owner):
+System roles seeded at provisioning (`is_system = true`, not deletable, not
+renamable; their permission sets are editable — except Owner's, which is
+read-only, see §4.0):
 
 | Role | Intent |
 |---|---|
@@ -219,6 +232,38 @@ Owner does **not** bypass entitlement checks either: an owner on a plan without
 
 Custom roles are unlimited in Phase 3; the `custom_roles` limit entitlement
 arrives when limit-type entitlements do.
+
+### 4.0 Role lifecycle and staff access  *(Phase 15 Manager)*
+
+There are no per-user grants — permissions flow only through `user_roles` — so
+"a custom permission set" IS a custom role. Every change below is an Action in
+`Kernel\Authorization\Actions`, audited as `Security`:
+
+| Action | Permission | Refuses |
+|---|---|---|
+| `CreateRole` | `role.create` (+ `role.permissions.manage` for initial codes) | a name another role has in that language; initial codes the creator lacks (the whole creation rolls back) |
+| `RenameRole` | `role.update` | system roles — their names come from `SystemRole::name()` |
+| `DeleteRole` | `role.delete` | system roles; any role still held (checked under a row lock) |
+| `UpdateRolePermissions` | `role.permissions.manage` | **ADDED** codes the editor does not hold (only added ones: an editor lacking a code the role already has can still save it, and that code stays — it can be neither added nor removed by them); the **Owner role** — read-only, it means "everything" and removing role management from it locks the owner out |
+| `AssignRolesToUser` | `staff.access.manage` | the owner's roles (by anyone else); the owner dropping the Owner role; changing your own roles; a target outside the actor's scope or holding permissions the actor lacks; roles carrying codes the actor lacks |
+| `SetUserBranchScope` | `staff.access.manage` | the owner; yourself; a target outside the actor's scope or above them; "all branches" from anyone not unrestricted; a branch outside the actor's scope; a NEW grant to an archived branch (one archived since it was granted may stay); an empty scope |
+
+A generated key (`custom-xxxxxxxxxx`) identifies a custom role; a name in Arabic
+or Kurdish has no sensible slug.
+
+**Staff login lifecycle** (Employees module): `CreateEmployee` (a login needs a
+unique phone; the email is optional, lower-cased and unique — a duplicate is a
+field error, never a 500; a scoped actor must place the person in one of their
+branches), `GrantEmployeeLogin` (a login for listed staff), `ReissueActivationLink`
+(**only while never activated** — re-issuing for a used account would let a
+manager take it over; never for the owner, yourself, or an account holding more
+than you), `SetEmployeeStatus` (never the owner, never yourself, never a
+superior; takes the branch lock). The activation link is redeemed on the guest
+page `/activate/{token}` (`guest:web`, `throttle:login`);
+`ManageStaffActivation::redeem()` re-checks the token under `lockForUpdate` in a
+transaction, refuses a disabled account, never signs the person in, and the
+token is never logged, flashed or stored. The Manager shows it once as a full
+link — the manager can see it, which is why re-issuing is limited as above.
 
 ### 4.1 Keeping system roles current  *(deploy step)*
 
@@ -276,6 +321,11 @@ an explicit list — which Actions consult directly and queries apply with
 one branch must not receive another branch's rows at all, not merely have them
 hidden.
 
+Creating a branch is the one write with no existing row to scope-check: a new
+branch lies outside every limited scope, so `SaveBranch` lets only an
+unrestricted actor open one (a scoped manager would otherwise create a branch
+they could neither see nor edit).
+
 The base policy class that makes forgetting the check a type error arrives with
 the first branch-owned business records in Phase 4.
 
@@ -306,7 +356,15 @@ Some permissions gate **fields**, not endpoints:
 | `customer.contact.view` | `+9647501234567` → `+964 ••••••••67`, `s•••@•••.com` |
 | `customer.note.view` | Internal notes not serialised at all |
 | `customer.note.manage` | Manager-only notes filtered out of the list |
-| `finance.revenue.view` | Revenue columns omitted entirely *(Phase 10)* |
+| `payment.view` | The invoice money panel is not rendered; payments and refunds are not serialised |
+| `payment.refund` | No refund form |
+| `payment.gateway.manage` | Gateway accounts are not listed. Credentials are never serialised for ANYONE |
+| `finance.view` | No dashboard, no ledger (Phase 10 has no `finance.revenue.view`: nothing is called revenue — docs/20 §43) |
+| `expense.manage` | No expenses and not even category names |
+| `loyalty.view` | No points panel at the till or on the customer page |
+| `loyalty.adjust` | No adjustment form; the API refuses with 403 |
+| `membership.view` / `package.view` | No memberships / packages panel; nothing to apply at the till |
+| `membership.manage` / `package.manage` | No plan or package editing, no cancel button |
 
 **Implemented in Phase 5** as `Kernel\Privacy\ContactMasker` plus
 `Modules\Customers\Application\CustomerPresenter`. The presenter is what the
@@ -403,7 +461,7 @@ pivot tables. Cheap. Recorded as reversible.
 | Breach check | Laravel `Password::uncompromised()` for staff and platform |
 | Throttling | Per identifier + per IP, exponential backoff |
 | Lockout | 10 failures → 15 minute lock, audited |
-| 2FA | Mandatory for platform users; available for staff; opt-in for owners initially, required from Phase 10 for `finance.*` holders |
+| 2FA | Mandatory for platform users; available for staff; opt-in for owners initially, required for `finance.*` / `payment.*` holders. **Not implemented as of Phase 10** — no two-factor mechanism exists yet; tracked as an open security gap, not silently dropped |
 | Password reset | Signed, single-use, 60-minute tokens; invalidates all sessions |
 | Deactivation | Soft — user retained for audit attribution, all tokens revoked, directory entry disabled |
 

@@ -18,6 +18,8 @@
    redirect does; a WhatsApp message does not).
 5. **Inbound webhooks:** verify signature → persist raw → return `200` → process
    asynchronously → idempotent by provider event id.
+   *Payment callbacks (Phase 10) deliberately keep no raw body and settle
+   synchronously after verification — ADR-060, docs/19 §§21–24.*
 6. **Every integration is entitlement-gated and quota-metered.**
 7. **No integration contains business rules.** They translate; the domain
    decides.
@@ -26,11 +28,22 @@
 
 ## 2. Payments (Phase 10)
 
+> **Implemented in Phase 10 — `docs/19-PAYMENTS.md` is authoritative.** What
+> follows is the Phase 0 design. Where they differ, docs/19 wins: the contract in
+> §2.3 became `Payments\Contracts\PaymentProvider` (create, read notification,
+> query, cancel, refund, explicit capabilities); the state machine in §2.5 became
+> `pending → succeeded | failed | cancelled` with refunds as separate rows; no
+> provider statement import exists; raw callbacks are not persisted (ADR-060).
+
 ### 2.1 Providers
 
 ZainCash · FIB · Qi · FastPay — subject to account access and documentation.
 Iraqi gateway documentation quality varies; treat "we can integrate provider X"
 as unproven until a sandbox transaction has succeeded.
+
+*Phase 10:* FIB has an adapter built from its published documentation, **not yet
+run against its sandbox**; ZainCash, Qi and FastPay are registered as explicitly
+unavailable.
 
 ### 2.2 The money rule
 
@@ -77,7 +90,7 @@ captured → refunded | partially_refunded
 Reconciliation runs daily against provider statements; unmatched transactions
 raise an operational alert rather than being auto-resolved.
 
-## 3. WhatsApp (Phase 13)
+## 3. WhatsApp (Phase 14)
 
 ### 3.1 Route decision (open)
 
@@ -88,7 +101,7 @@ raise an operational alert rather than being auto-resolved.
 
 Recommendation: design the adapter interface so both are possible, pilot with
 one BSP for onboarding simplicity, and keep the direct path open. Locked before
-Phase 13, not now.
+Phase 14, not now.
 
 ### 3.2 Architecture
 
@@ -117,7 +130,7 @@ part of tenant onboarding expectations.
 Handoff: the bot can escalate to a human host, transferring conversation
 context. While a human holds the conversation, the bot does not reply.
 
-## 4. RAYAN AI (Phase 14)
+## 4. RAYAN AI (Phase 15)
 
 ### 4.1 Non-negotiable architecture
 
@@ -223,7 +236,7 @@ Staged deliberately. **Do not build a print agent early.**
 All formats render through `Kernel/Templates`. RTL correctness on thermal
 output is verified separately from the browser (`07` §6).
 
-## 7. Search (post Phase 12, if needed)
+## 7. Search (post Phase 13, if needed)
 
 Not in the plan. If multilingual full-text search across services and customers
 becomes a real requirement, the constraint is recorded now: **one index per
@@ -232,7 +245,7 @@ application-level filter that a developer can forget (`02` §5).
 
 Until then, MySQL full-text and generated columns (`07` §3.3) are sufficient.
 
-## 8. Push notifications (Phase 13/16)
+## 8. Push notifications (Phase 14/17)
 
 FCM (Android) and APNs (iOS). White-label apps need **per-app credentials** —
 each branded app is a distinct bundle id with its own push configuration, stored

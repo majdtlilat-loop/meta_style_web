@@ -10,9 +10,17 @@
 > **Phase 9 locked the commerce keys.** `pos` owns sales, checkout, invoice
 > issuing, products and cashier shifts — new operations; invoices already issued
 > stay readable without it (§6.2); `printing` owns only the
-> 80mm/A4 paper surfaces; `payments` and `finance` are Phase 10. **There is no
-> `invoices` key** — issuing an invoice is a consequence of a POS sale, not a
-> product of its own. Phase 9 changed no package (docs/18-SALES.md §57).
+> 80mm/A4 paper surfaces. **There is no `invoices` key** — issuing an invoice is
+> a consequence of a POS sale, not a product of its own. Phase 9 changed no
+> package (docs/18-SALES.md §57).
+>
+> **Phase 10 used those keys, unchanged.** `pos` also covers taking cash and
+> staff-confirmed transfers against an invoice (cash never needs `payments`);
+> `payments` covers online gateway payments, gateway configuration and provider
+> refunds; `finance` covers expenses, counted shift closes and the dashboard. The
+> ledger is written regardless — it records money, it is not the product. A
+> provider callback is never refused because a center downgraded after the
+> payment started. Phase 10 changed no package (docs/19 §§2–3, docs/20 §3).
 >
 > **No seeded plan sells the queue keys.** Defining a capability and pricing it are two
 > decisions; a phase owns the first and never the second. Until the package work
@@ -101,13 +109,11 @@ the table exists so the SADMIN UI and plan builder can join against it.
                              'requires' => ['queue_management']],
 
 'pos'                    => ['type' => 'boolean', 'category' => 'commerce'],
-'invoices'               => ['type' => 'boolean', 'category' => 'commerce',
-                             'requires' => ['pos']],
 'printing'               => ['type' => 'boolean', 'category' => 'commerce'],
 'payments'               => ['type' => 'boolean', 'category' => 'commerce',
-                             'requires' => ['invoices']],
+                             'requires' => ['pos']],
 'finance'                => ['type' => 'boolean', 'category' => 'commerce',
-                             'requires' => ['invoices']],
+                             'requires' => ['pos']],
 'inventory'              => ['type' => 'boolean', 'category' => 'commerce'],
 
 'crm'                    => ['type' => 'boolean', 'category' => 'engagement'],
@@ -259,7 +265,7 @@ final class CallNextTicket
 **This is the one that matters.** Route middleware protects HTTP. It does
 nothing for a WhatsApp webhook, a RAYAN tool call, a queued job, an artisan
 command, or an internal module call — and those are exactly the paths that will
-exist by Phase 13.
+exist by Phase 14.
 
 `ensure()` throws `EntitlementRequired`, mapped to `403` by the exception
 handler.
@@ -310,6 +316,42 @@ if (! $this->entitlements->consume('whatsapp_messages', 1)) {
 hide unavailable features. This is **presentation only** — it is never the
 enforcement mechanism. Every gated endpoint enforces server-side regardless of
 what the client renders.
+
+#### The Manager shell (upsell, plan page, banner)
+
+`App\View\Manager\ManagerNavigation` builds the sidebar in PHP (composed into
+the layout by `ManagerShellComposer`; no logic in Blade). Two questions, kept
+apart:
+
+- **Permission** missing → the item is not rendered. Nobody is advertised a
+  module they could never use.
+- **Entitlement** not owned (and the subscription in good standing) → the item
+  is rendered LOCKED: lock icon, a label from `FeatureOffer::lockLabel()` read
+  from the real catalog (`PlanOffers::lowestIncluding`, dependency closure
+  applied) — "Available from Business", or "Contact us" when no public plan
+  sells it. It is a plain link to `center.plan?feature=KEY` without
+  `wire:navigate`; `resources/js/manager/shell.js` opens the
+  `Center\Shell\UpgradePrompt` dialog instead (`[data-upgrade-feature]`). The
+  prompt re-validates the key against the catalog, the navigation map and the
+  viewer's permissions. Nothing is unlocked by it. It links only where the
+  viewer may go: "View plans" for `settings.view`, "Contact Meta Style" for
+  `platform_support.view`; otherwise it says to ask whoever manages the
+  center's subscription.
+- Suspended / cancelled / expired → **no locks**; one `SubscriptionBanner`
+  line instead (trial days left and past-due grace for `settings.view`
+  holders; suspension and expiry for everyone).
+
+An `EntitlementRequired` that escapes on a WEB request renders
+`errors.feature-locked` with status 403 (`FeatureLockedPage`, registered in
+`bootstrap/app.php` after the API renderer, which keeps the JSON envelope).
+
+`center.plan` (`App\Livewire\Center\Plan`, `settings.view`) is read-only: the
+subscription as sold (snapshot name, price, currency, cycle), trial / renewal /
+grace dates, a scheduled change, owned features by category ("added" = an
+override beyond the plan), enforced allowances, and a comparison with the
+public plans (`PlanOffers::effectiveCodes`), prices in each plan's own
+currency, "Recommended" only for `is_featured`. The only action is to ask Meta
+Style through platform support (prefilled subject).
 
 ## 7. Trials
 

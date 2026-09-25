@@ -59,6 +59,12 @@ final class SaveResource
     {
         $this->authorize($actingUser);
 
+        // The resource as it stands must be in the actor's branches too: a
+        // scoped manager may not pull another branch's machine into theirs.
+        if ($resource !== null) {
+            $this->assertMayTouch($resource, $actingUser);
+        }
+
         $type = $this->type($input->typeUuid);
         $branch = $this->branch($input->branchUuid, $actingUser);
         $department = $this->department($input->departmentUuid);
@@ -122,6 +128,7 @@ final class SaveResource
     public function archive(OperationalResource $resource, User $actingUser): OperationalResource
     {
         $this->authorize($actingUser);
+        $this->assertMayTouch($resource, $actingUser);
 
         DB::connection('tenant')->transaction(function () use ($resource): void {
             $this->lock->acquireOne((int) $resource->branch_id);
@@ -139,6 +146,54 @@ final class SaveResource
         ));
 
         return $resource;
+    }
+
+    /**
+     * Brings an archived resource back into service.
+     *
+     * Bookable again from the next booking, so it takes the branch lock like
+     * every other change to capacity. Refused while its type is retired: a
+     * resource of an archived type would be a machine no service can ask for.
+     */
+    public function restore(OperationalResource $resource, User $actingUser): OperationalResource
+    {
+        $this->authorize($actingUser);
+        $this->assertMayTouch($resource, $actingUser);
+
+        $type = ResourceType::query()->whereKey($resource->resource_type_id)->first();
+
+        if (! $type instanceof ResourceType || ! $type->isBookable()) {
+            throw ValidationException::withMessages([
+                'resource_type' => __('manager_staff.errors.resource_type_unavailable'),
+            ]);
+        }
+
+        DB::connection('tenant')->transaction(function () use ($resource): void {
+            $this->lock->acquireOne((int) $resource->branch_id);
+
+            $resource->forceFill(['archived_at' => null, 'is_active' => true])->save();
+        });
+
+        $this->audit->record(new AuditEvent(
+            action: 'resources.resource.restored',
+            category: AuditCategory::Config,
+            actor: Actor::staff($actingUser),
+            targetType: OperationalResource::class,
+            targetId: $resource->uuid,
+            targetLabel: (string) $resource->name,
+        ));
+
+        return $resource;
+    }
+
+    /**
+     * @throws AuthorizationException
+     */
+    private function assertMayTouch(OperationalResource $resource, User $actingUser): void
+    {
+        if (! $actingUser->canAccessBranch((int) $resource->branch_id)) {
+            throw new AuthorizationException(__('manager_staff.errors.branch_denied'));
+        }
     }
 
     /**
@@ -162,7 +217,7 @@ final class SaveResource
 
         if (! $type instanceof ResourceType || ! $type->isBookable()) {
             throw ValidationException::withMessages([
-                'resource_type' => 'That resource type is not available.',
+                'resource_type' => __('manager_staff.errors.resource_type_unavailable'),
             ]);
         }
 
@@ -174,13 +229,13 @@ final class SaveResource
         $branch = Branch::query()->where('uuid', $uuid)->first();
 
         if (! $branch instanceof Branch) {
-            throw ValidationException::withMessages(['branch' => 'That branch does not exist.']);
+            throw ValidationException::withMessages(['branch' => __('manager_staff.errors.branch_unknown')]);
         }
 
         // Permission and branch scope, both. A manager scoped to one branch
         // must not install equipment in another (docs/06 §5).
         if (! $actingUser->canAccessBranch((int) $branch->getKey())) {
-            throw new AuthorizationException('You may not work in that branch.');
+            throw new AuthorizationException(__('manager_staff.errors.branch_denied'));
         }
 
         return $branch;
@@ -195,7 +250,7 @@ final class SaveResource
         $department = Department::query()->where('uuid', $uuid)->first();
 
         if (! $department instanceof Department) {
-            throw ValidationException::withMessages(['department' => 'That department does not exist.']);
+            throw ValidationException::withMessages(['department' => __('manager_staff.errors.department_unknown')]);
         }
 
         return $department;
@@ -207,7 +262,7 @@ final class SaveResource
     private function authorize(User $actingUser): void
     {
         if (! $actingUser->hasPermission(Permission::ResourceManage)) {
-            throw new AuthorizationException('You may not manage resources.');
+            throw new AuthorizationException(__('manager_staff.errors.resource_denied'));
         }
     }
 }

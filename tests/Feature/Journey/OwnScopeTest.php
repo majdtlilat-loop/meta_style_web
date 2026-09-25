@@ -49,7 +49,7 @@ function osBook(array $seed, $employee, string $time): Appointment
             customer: CustomerRef::details('Sara', '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 it('gives the broad grant everything in scope', function (): void {

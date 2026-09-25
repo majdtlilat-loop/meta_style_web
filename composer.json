@@ -14,6 +14,7 @@
         "laravel/sanctum": "^4.3",
         "laravel/tinker": "^2.10.1",
         "livewire/livewire": "^3.0",
+        "mpdf/mpdf": "^8.2",
         "stancl/tenancy": "^3.10"
     },
     "require-dev": {
@@ -44,7 +45,8 @@
         "setup": [
             "@php -r \"file_exists('.env') || copy('.env.example', '.env');\"",
             "@php artisan key:generate",
-            "@php artisan metastyle:control:migrate --force"
+            "@php artisan metastyle:control:migrate --force",
+            "@php artisan db:seed --force"
         ],
         "dev": [
             "Composer\\Config::disableProcessTimeout",
@@ -68,6 +70,39 @@
             "@lint",
             "@stan",
             "@test"
+        ],
+        "test:fast": [
+            "Composer\\Config::disableProcessTimeout",
+            "@php artisan config:clear --ansi",
+            "@php vendor/bin/pest tests/Architecture tests/Unit"
+        ],
+        "check:fast": [
+            "@lint",
+            "@stan",
+            "@test:fast"
+        ],
+        "test:phase14": [
+            "Composer\\Config::disableProcessTimeout",
+            "@php artisan config:clear --ansi",
+            "@php vendor/bin/pest tests/Architecture tests/Unit tests/TenantIsolation tests/Feature/Reports tests/Feature/Usage tests/Feature/Reviews/RatingSummaryTest.php tests/Feature/Saas/TrialAndEntitlementTest.php tests/Feature/Identity/SystemRoleSyncTest.php tests/Feature/FoundationTest.php tests/Feature/ProductionReadinessTest.php"
+        ],
+        "check:phase14": [
+            "@lint",
+            "@stan",
+            "@test:phase14"
+        ],
+        "test:phase15": [
+            "Composer\\Config::disableProcessTimeout",
+            "@php artisan config:clear --ansi",
+            "@php vendor/bin/pest tests/Architecture tests/Unit tests/TenantIsolation tests/Feature/Phase15 tests/Feature/Manager tests/Feature/Saas tests/Feature/Identity tests/Feature/Booking tests/Feature/Journey tests/Feature/Queue tests/Feature/Conversations tests/Feature/Rayan tests/Feature/Customers tests/Feature/Loyalty tests/Feature/Memberships tests/Feature/Packages tests/Feature/Reviews tests/Feature/Employees tests/Feature/Resources tests/Feature/Catalog tests/Feature/Sales tests/Feature/Payments tests/Feature/Finance tests/Feature/Printing tests/Feature/Reports tests/Feature/Charts tests/Feature/Usage tests/Feature/Notifications tests/Feature/Menu tests/Feature/CenterSite tests/Feature/Media tests/Feature/Localization tests/Feature/FoundationTest.php tests/Feature/ProductionReadinessTest.php"
+        ],
+        "check:phase15": [
+            "@lint",
+            "@stan",
+            "@test:phase15"
+        ],
+        "check:full": [
+            "@check"
         ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",

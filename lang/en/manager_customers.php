@@ -1,0 +1,276 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+|--------------------------------------------------------------------------
+| Manager — customers (CRM), the customer page and reviews
+|--------------------------------------------------------------------------
+|
+| Named after its SURFACE, never `customers.php`: a dotless `__('Customers')`
+| is parsed as a translation group and, on a case-insensitive filesystem,
+| would return this whole array (SafeguardsTest). Keep en / ar / ckb in exact
+| key parity.
+|
+*/
+
+return [
+    'list' => [
+        'search_full' => 'Name, phone or email',
+        'search_name' => 'Search by name',
+        'customer' => 'Customer',
+        'contact' => 'Contact',
+        'account' => 'Account',
+        'last_visit' => 'Last visit',
+        'no_visit' => 'No visit yet',
+        'masked' => 'Partly hidden',
+        'no_match' => 'No customer matches these filters.',
+        'empty_title' => 'No customers yet',
+    ],
+
+    'filters' => [
+        'status' => 'Status',
+        'active' => 'Active',
+        'archived' => 'Archived',
+        'account' => 'Account',
+        'everyone' => 'Everyone',
+        'has_account' => 'Has an account',
+        'guest' => 'Guest (no login)',
+        'visits' => 'Visits',
+        'visited' => 'Has visited',
+        'never_visited' => 'Never visited',
+        'tag' => 'Tag',
+        'any_tag' => 'Any tag',
+    ],
+
+    'actions' => [
+        'add' => 'Add customer',
+        'open' => 'Open',
+        'more' => 'More actions for :name',
+        'login_on' => 'Turn login on',
+        'login_off' => 'Turn login off',
+    ],
+
+    'status' => [
+        'archived' => 'Archived',
+        'registered' => 'Registered',
+        'guest' => 'Guest',
+        'login_active' => 'Login active',
+        'login_off' => 'Login off',
+    ],
+
+    'fields' => [
+        'name' => 'Full name',
+        'phone' => 'Phone',
+        'email' => 'Email',
+        'language' => 'Preferred language',
+        'date_of_birth' => 'Date of birth',
+        'tags' => 'Tags',
+        'messages' => 'Messages',
+    ],
+
+    'form' => [
+        'add_title' => 'Add customer',
+        'edit_title' => 'Edit customer',
+        'create' => 'Add customer',
+        'duplicate' => 'This number already belongs to :name. Open their record instead of creating a second one.',
+        'open_existing' => 'Open customer',
+        'contact_locked' => 'You do not have permission to see or change contact details.',
+        'language_default' => 'Center default',
+        'operational' => 'May receive booking and visit messages',
+        'marketing' => 'Opted in to marketing',
+    ],
+
+    'notices' => [
+        'saved' => 'Customer saved.',
+        'archived' => 'Customer archived. Their history stays.',
+        'restored' => 'Customer restored.',
+        'restored_login_off' => 'Customer restored. Their login stays off until you turn it on.',
+        'login_on' => 'Login turned on. The customer can sign in again.',
+        'login_off' => 'Login turned off. The customer can no longer sign in.',
+    ],
+
+    'confirm' => [
+        'archive_title' => 'Archive this customer?',
+        'archive_body' => ':name leaves the active list and their login is turned off. Bookings, visits, invoices and reviews stay.',
+        'login_off_title' => 'Turn this login off?',
+        'login_off_body' => ':name will no longer be able to sign in. Their record and history are unchanged.',
+    ],
+
+    'profile' => [
+        'breadcrumb' => 'Breadcrumb',
+        'sections' => 'Customer sections',
+        'since' => 'Customer since :date',
+        'details' => 'Contact and details',
+        'source' => 'Added from',
+        'not_set' => 'Not set',
+        'masked_note' => 'Contact details are partly hidden for your role.',
+        'operational_on' => 'Booking and visit messages: on',
+        'operational_off' => 'Booking and visit messages: off',
+        'marketing_on' => 'Marketing: opted in',
+        'marketing_off' => 'Marketing: not opted in',
+        'marketing_since' => 'since :date',
+        'account' => 'Online account',
+        'login' => 'Login',
+        'last_login' => 'Last sign-in',
+        'never' => 'Never',
+        'account_since' => 'Account created',
+        'phone_check' => 'Phone check',
+        'verified' => 'Verified',
+        'not_verified' => 'Not verified',
+        'no_account' => 'A guest: no online account.',
+    ],
+
+    'source' => [
+        'staff' => 'Added by staff',
+        'guest' => 'Guest booking',
+        'self_registration' => 'Signed up online',
+        'import' => 'Import',
+        'booking' => 'Online booking',
+    ],
+
+    'tabs' => [
+        'overview' => 'Overview',
+        'bookings' => 'Bookings',
+        'visits' => 'Visits',
+        'purchases' => 'Purchases',
+        'loyalty' => 'Loyalty',
+        'plans' => 'Memberships & packages',
+        'reviews' => 'Reviews',
+        'notes' => 'Notes',
+    ],
+
+    'tags' => [
+        'title' => 'Tags',
+        'new' => 'New tag',
+        'rename' => 'Tag name',
+        'rename_named' => 'Rename :name',
+        'add' => 'Add tag',
+        'added' => 'Tag added.',
+        'saved' => 'Tag renamed.',
+        'archived' => 'Tag archived. Customers keep it; it no longer shows in filters.',
+        'restored' => 'Tag restored.',
+        'none' => 'No tags yet.',
+        'customers' => '{0} No customers|{1} :n customer|[2,*] :n customers',
+        'archive_title' => 'Archive this tag?',
+        'archive_body' => ':name leaves the filters and the form. Customers who carry it keep it.',
+    ],
+
+    'panels' => [
+        'denied_title' => 'Not available for your role',
+    ],
+
+    'bookings' => [
+        'upcoming' => 'Upcoming',
+        'history' => 'Booking history',
+        'open_calendar' => 'Calendar',
+        'none_upcoming' => 'Nothing booked ahead.',
+        'none_past' => 'No earlier bookings.',
+        'when' => 'When',
+        'services' => 'Services',
+        'branch' => 'Branch',
+        'status' => 'Status',
+        'total' => 'Total',
+        'with' => 'with :name',
+    ],
+
+    'visits' => [
+        'title' => 'Visits',
+        'none' => 'No visits yet.',
+        'walk_in' => 'Walk-in',
+        'booked' => 'Booked',
+        'finished' => 'finished :time',
+    ],
+
+    'purchases' => [
+        'title' => 'Purchases',
+        'open_sales' => 'Sales',
+        'none' => 'No purchases yet.',
+        'invoice' => 'Invoice',
+        'date' => 'Date',
+        'voided' => 'Voided',
+        'discount' => 'incl. :amount discount',
+        'print' => 'Print invoice',
+    ],
+
+    'notes' => [
+        'title' => 'Internal notes',
+        'none' => 'No notes yet.',
+        'add' => 'Add note',
+        'body' => 'Note',
+        'placeholder' => 'Prefers a quiet appointment',
+        'no_health' => 'Operational notes only — no medical or health details.',
+        'visibility' => 'Who can read it',
+        'all_staff' => 'All staff',
+        'managers_only' => 'Managers only',
+        'unknown_author' => 'Staff',
+        'added' => 'Note added.',
+        'deleted' => 'Note deleted.',
+        'missing' => 'That note no longer exists.',
+        'delete_title' => 'Delete note',
+        'delete_confirm' => 'Delete this note? This cannot be undone.',
+    ],
+
+    'reviews' => [
+        'summary' => 'Rating summary',
+        'list' => 'Reviews',
+        'count' => '{1} :n review|[2,*] :n reviews',
+        'ratings' => '{1} :n rating|[2,*] :n ratings',
+        'share' => ':n reviews · :percent%',
+        'no_ratings' => 'No ratings for this selection.',
+        'by_service' => 'By service',
+        'by_employee' => 'By employee',
+        'none_rated' => 'Nothing rated yet.',
+        'rating' => 'Rating',
+        'service' => 'Service',
+        'employee' => 'Employee',
+        'none' => 'No reviews yet.',
+        'no_match' => 'No review matches these filters.',
+        'newer' => 'Newer',
+        'older' => 'Older',
+        'moderate' => 'Moderate',
+        'reason' => 'Reason',
+        'reason_help' => 'Required to hide. Staff see it; the customer does not.',
+        'hide' => 'Hide',
+        'flag' => 'Flag',
+        'unhide' => 'Show again',
+        'clear_flag' => 'Clear flag',
+        'unhide_confirm' => 'Show this review again and count it in the ratings?',
+        'moderated_by' => 'Moderated by :who on :date',
+        'hidden_saved' => 'Review hidden. It no longer counts in the ratings.',
+        'flagged_saved' => 'Review flagged for attention. It still counts.',
+        'shown_saved' => 'Review shown again.',
+        'customer_title' => 'Reviews by this customer',
+        'customer_none' => 'This customer has not left a review.',
+        'open_reviews' => 'All reviews',
+    ],
+
+    'errors' => [
+        'may_not_view' => 'You may not view customers.',
+        'may_not_create' => 'You may not add customers.',
+        'may_not_update' => 'You may not change customers.',
+        'may_not_archive' => 'You may not archive customers.',
+        'may_not_manage_accounts' => 'You may not manage customer logins.',
+        'may_not_manage_tags' => 'You may not manage customer tags.',
+        'tag_name_required' => 'A tag needs a name.',
+        'tag_name_long' => 'A tag name is at most :max characters.',
+        'tag_limit' => 'A center can have up to :max tags.',
+        'may_not_write_notes' => 'You may not write customer notes.',
+        'may_not_manage_notes' => 'You may not manage customer notes.',
+        'may_not_view_bookings' => 'You may not view this customer’s bookings.',
+        'may_not_view_visits' => 'You may not view this customer’s visits.',
+        'may_not_view_sales' => 'You may not view this customer’s purchases.',
+        'may_not_view_reviews' => 'You may not read reviews.',
+        'may_not_moderate' => 'You may not moderate reviews.',
+        'name_required' => 'A customer needs a name.',
+        'phone_invalid' => 'That does not look like a phone number.',
+        'phone_taken' => 'That number already belongs to :name.',
+        'note_required' => 'A note needs some text.',
+        'note_not_theirs' => 'That note does not belong to this customer.',
+        'no_account' => 'This customer has no online account.',
+        'restore_before_login' => 'Restore the customer before turning their login on.',
+        'review_hide_reason' => 'Say why this review is being hidden.',
+        'review_missing' => 'That review no longer exists.',
+        'review_not_found' => 'That review does not exist.',
+    ],
+];

@@ -48,16 +48,24 @@ it('defaults to the control connection and never to a tenant', function (): void
 it('leaves no unsupported database connection reachable', function (): void {
     // Laravel merges its base config over ours, so simply omitting these from
     // config/database.php is not enough — see AppServiceProvider.
+    //
+    // An EXACT set, mirrored by `AppServiceProvider::SUPPORTED_CONNECTIONS`
+    // and `DatabasePortabilityTest`. `reporting_template` is Phase 14's read
+    // replica template (ADR-074): admitted here only because, like the tenant
+    // template, it carries no database name — pinned by the test below.
     expect(array_keys(config('database.connections')))
-        ->toEqualCanonicalizing(['control', 'tenant_template']);
+        ->toEqualCanonicalizing(['control', 'tenant_template', 'reporting_template']);
 
     DB::connection('sqlite');
 })->throws(InvalidArgumentException::class);
 
-it('keeps the tenant template unusable as a connection', function (): void {
-    // The template supplies driver, host and credentials; it is copied, never
-    // connected to, and must never carry a database name.
-    expect(config('database.connections.tenant_template.database'))->toBeNull();
+it('keeps both connection templates unusable as connections', function (): void {
+    // A template supplies driver, host and credentials; it is copied, never
+    // connected to, and must never carry a database name. The runtime
+    // `tenant` and `tenant_reporting` connections get theirs from the bound
+    // tenant, never from here (docs/28-REPORTS.md §2).
+    expect(config('database.connections.tenant_template.database'))->toBeNull()
+        ->and(config('database.connections.reporting_template.database'))->toBeNull();
 });
 
 it('records failed queue jobs in the control database', function (): void {

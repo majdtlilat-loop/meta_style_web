@@ -163,6 +163,54 @@ final class EmployeeAssigner
     }
 
     /**
+     * Who takes each line of a visit being MOVED, or null if a line cannot be
+     * staffed.
+     *
+     * The in-memory counterpart of `RescheduleAppointment::reassign()`, with
+     * its rules exactly: candidates are tried in order, a line nobody at all
+     * may perform moves UNASSIGNED rather than blocking the move (§21), and a
+     * person claimed by an earlier line of the same visit is busy for the
+     * later ones. The busy map must already exclude the appointment being
+     * moved.
+     *
+     * @param  list<list<int>>  $candidates  per line, in the order to try them
+     * @param  list<TimeWindow>  $windows  one per line, same order
+     * @param  array<int, list<TimeWindow>>  $busy
+     * @return array<int, int|null>|null line position => employee id (null =
+     *                                   unassigned), or null if a line with
+     *                                   candidates has nobody free
+     */
+    public function assignFromCandidates(array $candidates, array $windows, array $busy): ?array
+    {
+        $assignments = [];
+
+        foreach ($candidates as $position => $forLine) {
+            $window = $windows[$position];
+            $chosen = null;
+
+            foreach ($forLine as $candidate) {
+                if (! $this->isBusy($candidate, $window, $busy)) {
+                    $chosen = $candidate;
+
+                    break;
+                }
+            }
+
+            if ($chosen === null && $forLine !== []) {
+                return null;
+            }
+
+            $assignments[$position] = $chosen;
+
+            if ($chosen !== null) {
+                $busy[$chosen][] = $window;
+            }
+        }
+
+        return $assignments;
+    }
+
+    /**
      * The authoritative single-employee check, straight to the database.
      *
      * Used inside the booking transaction while the lock is held. The in-memory

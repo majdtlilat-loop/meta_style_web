@@ -271,6 +271,39 @@ final class ResourceAllocator
     }
 
     /**
+     * Would the resources a booking ALREADY holds fit at new times?
+     *
+     * The in-memory counterpart of {@see revalidateUnderLock()}, for offering
+     * move slots: the same Occupancy peak, the same per-resource capacity, the
+     * same claim of earlier lines of the visit. The load map must already
+     * exclude the appointment being moved. Advisory, like every slot; the
+     * reschedule re-checks under the lock.
+     *
+     * @param  array<int, list<array{resource: OperationalResource, quantity: int}>>  $held  position => held resources
+     * @param  list<TimeWindow>  $windows
+     * @param  array<int, list<array{window: TimeWindow, quantity: int}>>  $loads
+     */
+    public function heldFit(array $held, array $windows, array $loads): bool
+    {
+        foreach ($held as $position => $reservations) {
+            $window = $windows[$position];
+
+            foreach ($reservations as $reservation) {
+                $resource = $reservation['resource'];
+                $id = (int) $resource->getKey();
+
+                if (! $this->occupancy->fits($loads[$id] ?? [], $window, $resource->capacity, $reservation['quantity'])) {
+                    return false;
+                }
+
+                $loads[$id][] = ['window' => $window, 'quantity' => $reservation['quantity']];
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * A set of requirements against one window: THE allocation policy.
      *
      * Public because it has a second caller. A walk-in stage reserved nothing

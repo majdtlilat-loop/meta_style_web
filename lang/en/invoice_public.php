@@ -38,4 +38,12 @@ return [
     'voided_on' => 'This invoice was voided on :date.',
     'thank_you' => 'Thank you for your visit.',
     'print' => 'Print',
+    'paid' => 'Paid',
+    'payment_pending' => 'Payment in progress',
+    'remaining' => 'Remaining',
+    'pay_with' => 'Pay the remaining balance with :provider',
+    'payment_waiting' => 'We are waiting for the payment provider to confirm your payment.',
+    'payment_code' => 'Payment code',
+    'open_payment_app' => 'Open the payment app',
+    'payment_unavailable' => 'Online payment is not available for this invoice right now.',
 ];

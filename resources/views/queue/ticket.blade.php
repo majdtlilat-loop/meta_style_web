@@ -68,6 +68,13 @@
             padding-block-start: 2mm;
         }
 
+        .center-name { font-size: 10pt; font-weight: 700; margin-block-end: 1mm; }
+        .ticket-logo { display: block; margin: 0 auto 2mm; max-inline-size: 60%; object-fit: contain; }
+        .ticket-logo[data-size="small"] { max-block-size: 9mm; }
+        .ticket-logo[data-size="medium"] { max-block-size: 14mm; }
+        .ticket-logo[data-size="large"] { max-block-size: 20mm; }
+        .closing { white-space: pre-line; }
+
         @media print {
             .no-print { display: none; }
         }
@@ -75,6 +82,14 @@
 </head>
 <body>
     <div class="ticket">
+        {{-- The center's print appearance: logo and name, applied at render
+             time (PrintAppearance). Still no customer PII. --}}
+        @if ($print['logo'])
+            <img class="ticket-logo" data-size="{{ $print['logo']['size'] }}" src="{{ $print['logo']['url'] }}" alt="">
+        @endif
+        @if ($print['show_center_name'])
+            <div class="center-name">{{ $centerName }}</div>
+        @endif
         @if ($ticket['branch_name'] !== null)
             <div class="branch">{{ $ticket['branch_name'] }}</div>
         @endif
@@ -97,15 +112,17 @@
         @endif
 
         <div class="meta">
-            {{ __('queue_public.issued_at') }}: {{ $ticket['issued_at'] }}<br>
-            {{ $ticket['issued_date'] }}
+            {{ __('queue_public.issued_at') }}: <span dir="ltr">{{ $ticket['issued_at'] }}</span>
+            @if ($print['ticket_show_date'])
+                <br><span dir="ltr">{{ $ticket['issued_date'] }}</span>
+            @endif
         </div>
 
-        <div class="meta">{{ __('queue_public.thank_you') }}</div>
+        <div class="meta closing">{{ $print['ticket_footer'] ?? __('queue_public.thank_you') }}</div>
     </div>
 
     <p class="no-print">
-        <button type="button" onclick="window.print()">{{ __('Print') }}</button>
+        <button type="button" onclick="window.print()">{{ __('invoice_public.print') }}</button>
     </p>
 
     <script>

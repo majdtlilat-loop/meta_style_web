@@ -6,6 +6,7 @@ namespace Tests\Support;
 
 use App\Kernel\Identity\Actions\IssueApiToken;
 use App\Kernel\Identity\Models\User;
+use App\Kernel\Reporting\ReportConnection;
 use App\Kernel\SaaS\Enums\RegistrationStatus;
 use App\Kernel\SaaS\Models\Registration;
 use App\Kernel\SaaS\RegistrationAccessToken;
@@ -29,6 +30,17 @@ trait RegistersCenters
     /** @var list<string> */
     private array $registeredDatabases = [];
 
+    /** Points the optional reporting seam at this test tenant's real database. */
+    protected function configureReportingConnection(): void
+    {
+        $template = DB::connection('tenant')->getConfig();
+        $template['database'] = null;
+        $template['name'] = ReportConnection::REPORTING_CONNECTION;
+
+        config()->set('database.connections.reporting_template', $template);
+        app(ReportConnection::class)->forget();
+    }
+
     /**
      * Registers a center and runs provisioning to completion.
      *
@@ -39,11 +51,16 @@ trait RegistersCenters
         string $email = 'owner@alpha.test',
         string $password = 'correct-horse-battery-staple',
         ?string $idempotencyKey = null,
+        ?string $slug = null,
     ): array {
         $result = app(RegistrationService::class)->register([
             'center_name' => $centerName,
+            // Absent, registration derives the slug from the name, as it does
+            // for a real signup.
+            'center_slug' => $slug,
             'owner_name' => 'Owner of '.$centerName,
             'owner_email' => $email,
+            'owner_phone' => '+9647701234567',
             'password' => $password,
             'locale' => 'en',
             'country' => 'IQ',
@@ -78,6 +95,11 @@ trait RegistersCenters
      */
     protected function runProvisioning(Registration $registration): void
     {
+        if ($registration->email_verified_at === null) {
+            app(RegistrationService::class)->verifyEmail($registration);
+            $registration->refresh();
+        }
+
         $job = new ProvisionRegisteredTenant($registration->uuid);
 
         app()->call([$job, 'handle']);
@@ -101,10 +123,15 @@ trait RegistersCenters
      */
     protected function asCenter(Tenant $tenant, Closure $callback): mixed
     {
-        return app(StanclTenantContext::class)->runForModel(
-            TenantModel::query()->findOrFail($tenant->id),
-            $callback,
-        );
+        $model = TenantModel::query()->findOrFail($tenant->id);
+
+        // What ResolveTenant does for a real request on the center's host, so
+        // a component rendered in-process can link to its sibling pages.
+        if (is_string($model->slug) && $model->slug !== '') {
+            app('url')->defaults(['center' => $model->slug]);
+        }
+
+        return app(StanclTenantContext::class)->runForModel($model, $callback);
     }
 
     protected function ownerOf(Tenant $tenant): User

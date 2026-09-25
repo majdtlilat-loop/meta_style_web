@@ -17,6 +17,7 @@ use App\Modules\Sales\Application\Actions\FinalizeSale;
 use App\Modules\Sales\Application\Actions\RotateInvoiceLink;
 use App\Modules\Sales\Application\Actions\SetBranchInvoicePrefix;
 use App\Modules\Sales\Application\InvoiceRenderer;
+use App\Modules\Sales\Application\Offerings;
 use App\Modules\Sales\Application\SalesAccess;
 use App\Modules\Sales\Application\SalesPresenter;
 use App\Modules\Sales\Application\SalesQuery;
@@ -94,6 +95,15 @@ final class SalesController extends Controller
         return ApiResponse::data(['discarded' => true]);
     }
 
+    /**
+     * What else the till can sell: memberships and packages, as their modules
+     * offer them now.
+     */
+    public function offerings(Request $request, Offerings $offerings, SalesPresenter $presenter): JsonResponse
+    {
+        return ApiResponse::data(['offerings' => $presenter->offerings($offerings->availableFor($this->user($request)))]);
+    }
+
     public function checkout(Request $request, string $journeyUuid, CheckoutJourney $checkout, SalesQuery $query, SalesPresenter $presenter): JsonResponse
     {
         $user = $this->user($request);
@@ -115,7 +125,11 @@ final class SalesController extends Controller
         $user = $this->user($request);
 
         $validated = $request->validate([
-            'kind' => ['required', 'string', 'in:service,product,custom,journey_stage'],
+            'kind' => ['required', 'string', 'in:service,product,custom,journey_stage,offering'],
+            // An offering: which catalog, and which of its items. Priced by the
+            // catalog, never by the request.
+            'offering_type' => ['nullable', 'required_if:kind,offering', 'string', 'max:32'],
+            'offering' => ['nullable', 'required_if:kind,offering', 'string', 'max:64'],
             'service' => ['nullable', 'string'],
             'variation' => ['nullable', 'string'],
             'addons' => ['nullable', 'array', 'max:20'],
@@ -131,7 +145,7 @@ final class SalesController extends Controller
             'note' => ['nullable', 'string', 'max:190'],
         ]);
 
-        /** @var array{kind: string, service?: string|null, variation?: string|null, addons?: list<string>, product?: string|null, stage?: string|null, name?: string|null, unit_price_minor?: int|null, reason?: string|null, quantity?: int|null, note?: string|null} $validated */
+        /** @var array{kind: string, service?: string|null, variation?: string|null, addons?: list<string>, product?: string|null, stage?: string|null, name?: string|null, unit_price_minor?: int|null, reason?: string|null, quantity?: int|null, note?: string|null, offering_type?: string|null, offering?: string|null} $validated */
         $add($query->find($uuid, $user), $user, $validated);
 
         return ApiResponse::data(['sale' => $presenter->sale($query->find($uuid, $user), $user)], 201);

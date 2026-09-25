@@ -10,15 +10,18 @@ use App\Kernel\Audit\AuditEvent;
 use App\Kernel\Audit\Enums\ActorType;
 use App\Kernel\Audit\Enums\AuditCategory;
 use App\Kernel\Audit\Enums\AuditSource;
-use App\Kernel\Authorization\Models\Role;
 use App\Kernel\Authorization\Permission;
+use App\Kernel\Contact\PhoneNumber;
 use App\Kernel\Identity\Actions\ManageStaffActivation;
 use App\Kernel\Identity\Models\User;
 use App\Kernel\Localization\TranslatedText;
+use App\Modules\Employees\Application\StaffAccountFactory;
+use App\Modules\Employees\Application\StaffBranches;
 use App\Modules\Employees\Domain\Data\NewEmployee;
 use App\Modules\Employees\Domain\Models\Employee;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Adds a member of staff, optionally with a login.
@@ -29,33 +32,54 @@ use Illuminate\Support\Facades\DB;
  *
  * When a login IS wanted, no password is set here. An activation link is issued
  * instead, so the creating manager never holds the new person's credential.
+ *
+ * Every center user ACCOUNT has a phone number (owner, manager, staff): a
+ * login is refused without a valid one, whichever form or API asked for it.
+ * An employee without a login has no account, so needs none. An email is
+ * optional and unique in the center — a duplicate is a field error, never the
+ * database's UNIQUE constraint surfacing as a 500.
  */
 final class CreateEmployee
 {
     public function __construct(
         private readonly ManageStaffActivation $activation,
+        private readonly StaffAccountFactory $accounts,
         private readonly Audit $audit,
     ) {}
 
     /**
      * @return array{employee: Employee, user: User|null, activation_token: string|null}
+     *
+     * @throws AuthorizationException
+     * @throws ValidationException
      */
     public function __invoke(NewEmployee $input, User $actingUser): array
     {
-        $this->authorize($input, $actingUser);
+        $branchIds = $this->authorize($input, $actingUser);
+
+        $name = TranslatedText::fromArray($input->name);
+
+        if ($name->isEmpty()) {
+            throw ValidationException::withMessages(['name' => __('manager_staff.errors.name_required')]);
+        }
+
+        $phone = $input->wantsLogin() ? $this->accounts->requirePhone($input->phone) : null;
+        $email = $phone !== null ? $this->accounts->normaliseEmail($input->email) : null;
 
         /** @var array{employee: Employee, user: User|null, activation_token: string|null} $result */
-        $result = DB::connection('tenant')->transaction(function () use ($input, $actingUser): array {
-            $user = $input->wantsLogin() ? $this->createUser($input, $actingUser) : null;
+        $result = DB::connection('tenant')->transaction(function () use ($input, $name, $phone, $email, $branchIds, $actingUser): array {
+            $user = $phone instanceof PhoneNumber
+                ? $this->accounts->create($input->displayName(), $phone, $email, $branchIds, $input->roleIds)
+                : null;
 
             /** @var Employee $employee */
             $employee = Employee::query()->create([
-                'name' => TranslatedText::fromArray($input->name),
+                'name' => $name,
                 'status' => $input->status,
                 'user_id' => $user?->getKey(),
             ]);
 
-            $employee->branches()->sync($input->branchIds);
+            $employee->branches()->sync($branchIds);
 
             $token = $user !== null ? $this->activation->issue($user, $actingUser) : null;
 
@@ -71,9 +95,11 @@ final class CreateEmployee
             targetLabel: (string) $result['employee']->name,
             after: [
                 'status' => $input->status->value,
-                'branches' => $input->branchIds,
+                'branches' => $branchIds,
                 'has_login' => $result['user'] !== null,
-                'roles' => $input->roleIds,
+                // Roles belong to a login. Without one nothing was granted,
+                // and the trail must not claim otherwise.
+                'roles' => $result['user'] !== null ? $input->roleIds : [],
             ],
         ));
 
@@ -81,88 +107,30 @@ final class CreateEmployee
     }
 
     /**
+     * @return list<int> the validated branch assignment
+     *
      * @throws AuthorizationException
+     * @throws ValidationException
      */
-    private function authorize(NewEmployee $input, User $actingUser): void
+    private function authorize(NewEmployee $input, User $actingUser): array
     {
         // Permission and branch scope are separate gates, and both must pass.
         // A manager scoped to one branch must not be able to staff another.
         if (! $actingUser->hasPermission(Permission::StaffCreate)) {
-            throw new AuthorizationException('You may not add staff.');
+            throw new AuthorizationException(__('manager_staff.errors.create_denied'));
         }
 
-        $scope = $actingUser->branchScope();
-
-        foreach ($input->branchIds as $branchId) {
-            if (! $scope->allows($branchId)) {
-                throw new AuthorizationException('You may not add staff to that branch.');
-            }
-        }
+        $branchIds = StaffBranches::resolve($input->branchIds, $actingUser);
 
         if ($input->roleIds !== [] && ! $actingUser->hasPermission(Permission::StaffAccessManage)) {
-            throw new AuthorizationException('You may not assign roles.');
+            throw new AuthorizationException(__('manager_staff.errors.roles_denied'));
         }
 
-        $this->assertCanGrantRoles($input->roleIds, $actingUser);
-    }
+        // Without this, a manager who may add staff could create an account
+        // with the Owner role and then sign in as it.
+        $this->accounts->assertCanGrantRoles($input->roleIds, $actingUser);
 
-    /**
-     * Prevents privilege escalation through role assignment.
-     *
-     * Without this, a manager who may add staff could create an account with
-     * the Owner role and then sign in as it. Nobody may grant a permission
-     * they do not themselves hold.
-     *
-     * @param  list<int>  $roleIds
-     *
-     * @throws AuthorizationException
-     */
-    private function assertCanGrantRoles(array $roleIds, User $actingUser): void
-    {
-        if ($roleIds === []) {
-            return;
-        }
-
-        $held = $actingUser->permissions();
-
-        /** @var list<Role> $roles */
-        $roles = Role::query()->whereIn('id', $roleIds)->get()->all();
-
-        foreach ($roles as $role) {
-            foreach ($role->permissionCodes() as $code) {
-                if (! in_array($code, $held, true)) {
-                    throw new AuthorizationException(
-                        'You may not assign a role that grants permissions you do not have.'
-                    );
-                }
-            }
-        }
-    }
-
-    private function createUser(NewEmployee $input, User $actingUser): User
-    {
-        /** @var User $user */
-        $user = User::query()->create([
-            'name' => $input->displayName(),
-            'email' => $input->email,
-            'phone' => $input->phone,
-            // No password: the account exists but cannot sign in until the
-            // person redeems their activation link.
-            'password' => null,
-            'is_active' => true,
-            'is_owner' => false,
-            'all_branches' => false,
-        ]);
-
-        $user->syncBranchScope($input->branchIds);
-
-        if ($input->roleIds !== []) {
-            $user->roles()->sync($input->roleIds);
-        }
-
-        unset($actingUser);
-
-        return $user;
+        return $branchIds;
     }
 
     private function actor(User $user): Actor

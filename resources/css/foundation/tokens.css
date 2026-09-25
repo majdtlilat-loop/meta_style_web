@@ -1,0 +1,278 @@
+/*
+ * Meta Style design tokens.
+ *
+ * Three layers, and components only ever read the SEMANTIC one:
+ *
+ *   brand primitives   the locked identity colours — never used directly by UI
+ *   semantic tokens    canvas, surface, border, text, primary, status …
+ *   legacy aliases     older names still referenced by existing markup
+ *
+ * Rose gold is an ACCENT: active navigation, CTAs, focus, selection and small
+ * highlights. It is never a large surface.
+ *
+ * Contrast notes are WCAG 2.2 ratios against the surface they sit on.
+ */
+
+:root {
+    /* ── Brand primitives (locked) ─────────────────────────────────────── */
+    --brand-rose: #b76e79;
+    --brand-beige: #e4c3ad;
+    --brand-cream: #fff0e5;
+    --brand-chocolate: #6b4226;
+    --brand-white: #ffffff;
+
+    /* Backwards-compatible primitive names */
+    --brand-primary: var(--brand-rose);
+    --brand-accent: var(--brand-beige);
+
+    /* ── Typography ─────────────────────────────────────────────────────── */
+    --font-latin: "Poppins", "Noto Sans Arabic", "Segoe UI", system-ui, sans-serif;
+    --font-arabic: "Noto Sans Arabic", "Poppins", Tahoma, system-ui, sans-serif;
+    --font-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    --font-body: var(--font-latin);
+    --weight-body: 400;
+    --weight-strong: 600;
+    --weight-heading: 600;
+
+    --text-2xs: .6875rem;   /* 11px — counters only, never prose */
+    --text-xs: .75rem;      /* 12px */
+    --text-sm: .8125rem;    /* 13px */
+    --text-base: .875rem;   /* 14px — dense operational body */
+    --text-md: 1rem;        /* 16px */
+    --text-lg: 1.125rem;    /* 18px */
+    --text-xl: 1.375rem;    /* 22px */
+    --text-2xl: 1.625rem;   /* 26px */
+    --text-3xl: 2rem;       /* 32px */
+    --leading-tight: 1.25;
+    --leading-body: 1.55;
+
+    /* ── Space, radius, layout ─────────────────────────────────────────── */
+    --space-1: .25rem;
+    --space-2: .5rem;
+    --space-3: .75rem;
+    --space-4: 1rem;
+    --space-5: 1.25rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --space-10: 2.5rem;
+    --space-12: 3rem;
+
+    --radius-xs: .375rem;
+    --radius-sm: .5rem;
+    --radius-md: .625rem;
+    --radius-lg: .875rem;
+    --radius-xl: 1.125rem;
+    --radius-pill: 999px;
+
+    --sidebar-width: 16rem;
+    --sidebar-width-collapsed: 4.5rem;
+    --topbar-height: 3.75rem;
+    --content-max: 90rem;
+    --control-height: 2.5rem;
+    --control-height-sm: 2rem;
+
+    /* ── Motion ─────────────────────────────────────────────────────────── */
+    --ease-out: cubic-bezier(.2, .8, .2, 1);
+    --duration-fast: 120ms;
+    --duration: 180ms;
+    --duration-slow: 260ms;
+
+    /* ── Gradients ──────────────────────────────────────────────────────────
+     * Semantic, so a platform theme (Settings → Branding) can replace them
+     * without touching a stylesheet. `--gradient-cta: none` keeps buttons flat.
+     */
+    --gradient-primary: linear-gradient(135deg, #6b4226, #a8616d 70%, #b76e79);
+    --gradient-hero: linear-gradient(135deg, #4d2f1b, #8f4f5b 65%, #b76e79);
+    --gradient-accent: linear-gradient(135deg, var(--color-primary-soft), var(--color-accent-soft));
+    --gradient-cta: none;
+    --gradient-cta-hover: none;
+
+    /* ── Z layers ───────────────────────────────────────────────────────── */
+    --z-sticky: 20;
+    --z-topbar: 30;
+    --z-dropdown: 60;
+    --z-sidebar-mobile: 70;
+    --z-drawer: 80;
+    --z-modal: 90;
+    --z-toast: 100;
+}
+
+/* ═══ LIGHT ═══════════════════════════════════════════════════════════════ */
+:root,
+[data-theme="light"] {
+    color-scheme: light;
+
+    /* Surfaces — brand spec: white canvas, #FFF8F5 cards */
+    --color-canvas: #ffffff;
+    --color-surface: #fff8f5;
+    --color-surface-muted: #fbf0ea;       /* table heads, wells, insets */
+    --color-surface-elevated: #ffffff;    /* menus, popovers, drawers, modals */
+    --color-sidebar: #fff8f5;
+    --color-topbar: rgb(255 255 255 / .9);
+    --color-hover: #faede6;
+    --color-selected: rgb(183 110 121 / .11);
+    --color-input: #ffffff;
+    --color-input-disabled: #f6eee9;
+    --color-overlay: rgb(46 33 25 / .42);
+    --color-skeleton: #f3e6de;
+
+    /* Lines */
+    --color-border: #eedfd5;
+    --color-border-strong: #dfc8ba;
+    --color-divider: #f3e7df;
+
+    /* Text */
+    --color-text: #2e2119;                /* 15.9:1 on white */
+    --color-text-muted: #6e5a4e;          /* 6.5:1 on white, 6.1:1 on surface */
+    --color-text-subtle: #857063;         /* 4.7:1 — placeholders, captions */
+    --color-icon: #8a7568;
+    --color-heading: #2e2119;
+
+    /* Primary — rose gold */
+    --color-primary: #b76e79;             /* accents, indicators, focus (3.8:1 non-text) */
+    --color-primary-strong: #a8616d;      /* filled CTA background: white text 4.6:1 */
+    --color-primary-strong-hover: #955561;
+    --color-on-primary: #ffffff;
+    --color-primary-text: #9a5662;        /* links, active labels: 5.3:1 */
+    --color-primary-soft: #fbedef;
+    --color-primary-border: #ebc9cf;
+
+    /* Supporting brand */
+    --color-secondary: #6b4226;
+    --color-accent: #e4c3ad;
+    --color-accent-soft: #fff0e5;
+    --color-chocolate: #6b4226;
+
+    /* Status */
+    --color-success: #1e7a50;
+    --color-success-soft: #e8f4ec;
+    --color-success-border: #c0e0cc;
+    --color-warning: #955709;
+    --color-warning-soft: #fdf2e0;
+    --color-warning-border: #f0d3a6;
+    --color-danger: #b4334a;
+    --color-danger-soft: #fcebee;
+    --color-danger-border: #f1c3cc;
+    --color-info: #1f6784;
+    --color-info-soft: #e6f1f6;
+    --color-info-border: #bcd9e6;
+    --color-neutral: #6e5a4e;
+    --color-neutral-soft: #f5ede8;
+    --color-neutral-border: #e6d7cd;
+
+    --color-focus: #b76e79;
+    --color-disabled: #f1e6df;
+    --color-disabled-text: #8f7b6f;
+
+    --shadow-xs: 0 1px 2px rgb(46 33 25 / .05);
+    --shadow-sm: 0 1px 2px rgb(46 33 25 / .04), 0 2px 8px -2px rgb(46 33 25 / .06);
+    --shadow-md: 0 6px 16px -6px rgb(46 33 25 / .14), 0 2px 4px rgb(46 33 25 / .04);
+    --shadow-lg: 0 20px 44px -14px rgb(46 33 25 / .28), 0 4px 12px rgb(46 33 25 / .06);
+}
+
+/* ═══ DARK ════════════════════════════════════════════════════════════════
+ * A neutral near-black with a faint warm-plum undertone, so rose gold reads
+ * as a jewel accent rather than disappearing into brown. Elevation is shown
+ * by lighter surfaces and hairline borders, not heavy shadows.
+ */
+[data-theme="dark"] {
+    color-scheme: dark;
+
+    --color-canvas: #121113;
+    --color-surface: #1a181b;
+    --color-surface-muted: #211e22;
+    --color-surface-elevated: #242126;
+    --color-sidebar: #161417;
+    --color-topbar: rgb(18 17 19 / .84);
+    --color-hover: #27242a;
+    --color-selected: rgb(214 147 157 / .14);
+    --color-input: #151316;
+    --color-input-disabled: #1e1b1f;
+    --color-overlay: rgb(0 0 0 / .62);
+    --color-skeleton: #262328;
+
+    --color-border: #2f2b31;
+    --color-border-strong: #423c45;
+    --color-divider: #262229;
+
+    --color-text: #f2ecea;                /* 15.2:1 on surface */
+    --color-text-muted: #b0a5a4;          /* 7.1:1 */
+    --color-text-subtle: #8f8585;         /* 4.7:1 */
+    --color-icon: #a89c9c;
+    --color-heading: #f7f2f0;
+
+    --color-primary: #d6939d;             /* 7.5:1 on canvas */
+    --color-primary-strong: #cc8691;      /* filled CTA background */
+    --color-primary-strong-hover: #d99ba5;
+    --color-on-primary: #1c1114;          /* 6.4:1 on the fill */
+    --color-primary-text: #e3a7b0;        /* 8.7:1 on surface */
+    --color-primary-soft: rgb(214 147 157 / .13);
+    --color-primary-border: rgb(214 147 157 / .38);
+
+    --color-secondary: #d9b393;
+    --color-accent: #e4c3ad;
+    --color-accent-soft: rgb(228 195 173 / .09);
+    --color-chocolate: #d9b393;
+
+    --color-success: #6ccb98;
+    --color-success-soft: rgb(108 203 152 / .12);
+    --color-success-border: rgb(108 203 152 / .32);
+    --color-warning: #e6b566;
+    --color-warning-soft: rgb(230 181 102 / .12);
+    --color-warning-border: rgb(230 181 102 / .32);
+    --color-danger: #f08a99;
+    --color-danger-soft: rgb(240 138 153 / .12);
+    --color-danger-border: rgb(240 138 153 / .34);
+    --color-info: #7bc0dd;
+    --color-info-soft: rgb(123 192 221 / .12);
+    --color-info-border: rgb(123 192 221 / .32);
+    --color-neutral: #b0a5a4;
+    --color-neutral-soft: rgb(176 165 164 / .1);
+    --color-neutral-border: rgb(176 165 164 / .26);
+
+    --color-focus: #e3a3ad;
+    --color-disabled: #26232a;
+    --color-disabled-text: #7d7474;
+
+    --shadow-xs: 0 1px 2px rgb(0 0 0 / .4);
+    --shadow-sm: 0 1px 3px rgb(0 0 0 / .45);
+    --shadow-md: 0 10px 24px -8px rgb(0 0 0 / .6), 0 0 0 1px rgb(255 255 255 / .02);
+    --shadow-lg: 0 28px 56px -16px rgb(0 0 0 / .75), 0 0 0 1px rgb(255 255 255 / .03);
+}
+
+/* ═══ Script-specific typography ══════════════════════════════════════════
+ * Arabic and Kurdish Sorani: Noto Sans Arabic Light for body, Medium for
+ * headings — and one step larger, because Arabic script at Latin sizes reads
+ * small.
+ */
+html[lang="ar"],
+html[lang="ckb"] {
+    --font-body: var(--font-arabic);
+    --weight-body: 300;
+    --weight-strong: 500;
+    --weight-heading: 500;
+    --text-base: .9375rem;
+    --text-sm: .875rem;
+    --text-xs: .8125rem;
+}
+
+/* ═══ Legacy aliases ══════════════════════════════════════════════════════
+ * Still referenced by existing markup. The reports screens read --line,
+ * --muted, --bg, --fg and --surface, which were previously defined only on the
+ * public menu pages — so inside the Manager they resolved to nothing.
+ */
+:root,
+[data-theme] {
+    --color-background: var(--color-canvas);
+    --color-surface-raised: var(--color-surface);
+    --color-primary-hover: var(--color-primary-strong-hover);
+    --shadow-card: var(--shadow-sm);
+    --line: var(--color-border);
+    --muted: var(--color-text-muted);
+    --bg: var(--color-canvas);
+    --fg: var(--color-text);
+    --surface: var(--color-surface);
+    --accent: var(--color-primary);
+    --primary: var(--color-primary);
+    --radius: var(--radius-lg);
+}

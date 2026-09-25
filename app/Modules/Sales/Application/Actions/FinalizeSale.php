@@ -7,12 +7,14 @@ namespace App\Modules\Sales\Application\Actions;
 use App\Kernel\Authorization\Permission;
 use App\Kernel\Identity\Models\User;
 use App\Modules\Sales\Application\InvoiceIssuer;
+use App\Modules\Sales\Application\SaleFinalizationGuards;
 use App\Modules\Sales\Application\SalesAccess;
 use App\Modules\Sales\Application\SalesAudit;
 use App\Modules\Sales\Application\VisitLines;
 use App\Modules\Sales\Domain\Data\IssuedInvoice;
 use App\Modules\Sales\Domain\Enums\SaleStatus;
 use App\Modules\Sales\Domain\Enums\ShiftStatus;
+use App\Modules\Sales\Domain\Events\SaleFinalized;
 use App\Modules\Sales\Domain\Exceptions\SaleFailed;
 use App\Modules\Sales\Domain\Models\CashierShift;
 use App\Modules\Sales\Domain\Models\Invoice;
@@ -23,6 +25,7 @@ use App\Modules\ServiceJourney\Domain\Enums\JourneyStatus;
 use App\Modules\ServiceJourney\Domain\Models\ServiceJourney;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
@@ -82,6 +85,8 @@ final class FinalizeSale
         private readonly InvoiceIssuer $issuer,
         private readonly VisitLines $visitLines,
         private readonly SalesAudit $audit,
+        private readonly SaleFinalizationGuards $guards,
+        private readonly Dispatcher $events,
     ) {}
 
     /**
@@ -115,6 +120,11 @@ final class FinalizeSale
                     throw SaleFailed::policy('An empty sale cannot be finalized.');
                 }
 
+                // Whatever a higher module knows that makes publishing wrong —
+                // a membership with nobody to give it to — refuses here, under
+                // the sale lock, before a number is allocated.
+                $this->guards->assertFinalizable($locked);
+
                 // Authoritative. Whatever the screen showed, THIS is the total.
                 $this->mutation->recalculate($locked);
 
@@ -145,6 +155,10 @@ final class FinalizeSale
                     'number' => $invoice->number,
                     'grand_total_minor' => $invoice->grand_total_minor,
                 ]);
+
+                // Synchronous, in this transaction: a listener's writes commit
+                // with the invoice or not at all.
+                $this->events->dispatch(new SaleFinalized((int) $locked->getKey()));
 
                 return $issued;
             });

@@ -30,6 +30,7 @@ enum ApiErrorCode: string
     case TenantResolutionConflict = 'TENANT.RESOLUTION_CONFLICT';
     case EntitlementNotAvailable = 'ENTITLEMENT.NOT_AVAILABLE';
     case RegistrationNotRetryable = 'REGISTRATION.NOT_RETRYABLE';
+    case ReportingUnavailable = 'REPORTING.UNAVAILABLE';
 
     /*
      * Booking. Each of these is a DIFFERENT thing for a client to do about it,
@@ -73,6 +74,52 @@ enum ApiErrorCode: string
      */
     case SalesInvalidTransition = 'SALES.INVALID_TRANSITION';
     case SalesPolicyViolation = 'SALES.POLICY_VIOLATION';
+
+    /*
+     * Payments — collecting and returning money. "That payment already
+     * succeeded" is not "that amount is more than is left to collect", and
+     * neither is "the provider could not be reached" (docs/19-PAYMENTS.md).
+     */
+    case PaymentsInvalidTransition = 'PAYMENTS.INVALID_TRANSITION';
+    case PaymentsPolicyViolation = 'PAYMENTS.POLICY_VIOLATION';
+    case PaymentsProviderUnavailable = 'PAYMENTS.PROVIDER_UNAVAILABLE';
+    case PaymentsProviderUnsupported = 'PAYMENTS.PROVIDER_UNSUPPORTED';
+
+    /*
+     * Finance — the center's ledger, expenses and drawer counts
+     * (docs/20-FINANCE.md).
+     */
+    case FinanceInvalidTransition = 'FINANCE.INVALID_TRANSITION';
+    case FinancePolicyViolation = 'FINANCE.POLICY_VIOLATION';
+
+    /*
+     * A customer's benefits — points, memberships, service packages
+     * (docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md). "Not enough points" is a
+     * policy refusal; "that package was already cancelled" is a transition.
+     */
+    case LoyaltyInvalidTransition = 'LOYALTY.INVALID_TRANSITION';
+    case LoyaltyPolicyViolation = 'LOYALTY.POLICY_VIOLATION';
+    case MembershipsInvalidTransition = 'MEMBERSHIPS.INVALID_TRANSITION';
+    case MembershipsPolicyViolation = 'MEMBERSHIPS.POLICY_VIOLATION';
+    case PackagesInvalidTransition = 'PACKAGES.INVALID_TRANSITION';
+    case PackagesPolicyViolation = 'PACKAGES.POLICY_VIOLATION';
+
+    /*
+     * Reviews. The public review page maps INVALID_TOKEN, and only that, to a
+     * generic 404 — unknown, revoked and expired are one answer to a stranger,
+     * because distinguishing them confirms that a visit existed
+     * (docs/22-REVIEWS.md §17). The others are for staff and for a signed-in
+     * customer, who are already entitled to know which visit they are looking
+     * at.
+     */
+    case ReviewInvalidToken = 'REVIEW.INVALID_TOKEN';
+    case ReviewAlreadySubmitted = 'REVIEW.ALREADY_SUBMITTED';
+    case ReviewNotEligible = 'REVIEW.NOT_ELIGIBLE';
+    case ReviewRatingInvalid = 'REVIEW.RATING_INVALID';
+    case ReviewPolicyViolation = 'REVIEW.POLICY_VIOLATION';
+
+    /** Notifications. Reaching for somebody else's inbox answers `NotFound`. */
+    case NotificationPolicyViolation = 'NOTIFICATION.POLICY_VIOLATION';
 
     public function httpStatus(): int
     {
@@ -119,6 +166,38 @@ enum ApiErrorCode: string
             // Same reasoning: editing a finalized sale or finalizing an empty
             // one is refused just as firmly on a retry.
             self::SalesInvalidTransition, self::SalesPolicyViolation => 422,
+
+            // Collecting more than is left, refunding more than was paid, and
+            // a provider feature that does not exist are all wrong requests a
+            // retry will not fix. A provider that did not answer is the one
+            // failure that IS worth retrying later.
+            self::PaymentsInvalidTransition,
+            self::PaymentsPolicyViolation,
+            self::PaymentsProviderUnsupported,
+            self::FinanceInvalidTransition,
+            self::FinancePolicyViolation => 422,
+            self::PaymentsProviderUnavailable, self::ReportingUnavailable => 503,
+
+            // A benefit a customer does not have, or no longer can use, is
+            // refused the same way on every retry.
+            self::LoyaltyInvalidTransition,
+            self::LoyaltyPolicyViolation,
+            self::MembershipsInvalidTransition,
+            self::MembershipsPolicyViolation,
+            self::PackagesInvalidTransition,
+            self::PackagesPolicyViolation => 422,
+
+            // A link that opens nothing is a 404 — the same 404 a stranger
+            // gets for a token that never existed. A visit that has already
+            // been reviewed is a conflict with the world as it is, and is only
+            // ever shown to somebody entitled to know it (§17).
+            self::ReviewInvalidToken => 404,
+            self::ReviewAlreadySubmitted => 409,
+            self::ReviewNotEligible,
+            self::ReviewRatingInvalid,
+            self::ReviewPolicyViolation,
+            self::NotificationPolicyViolation => 422,
+
             self::ServerError, self::TenantNotInitialized => 500,
         };
     }

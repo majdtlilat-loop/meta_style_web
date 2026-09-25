@@ -25,6 +25,17 @@
         </include>
     </source>
     <php>
+        <!--
+            The architecture suite parses every file under `app/` with
+            nikic/php-parser, and the tree it builds is proportional to the
+            codebase. XAMPP's default 512M was reached in Phase 11 and the run
+            died mid-suite with a fatal error rather than a failure. Raised here
+            rather than in the developer's php.ini, so every runner — Pest
+            directly, `composer check:fast`, the phase gate and the full gate —
+            gets the same ceiling. Nothing about what is tested changes.
+        -->
+        <ini name="memory_limit" value="2G"/>
+
         <env name="APP_ENV" value="testing"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
@@ -52,6 +63,21 @@
             without it.
         -->
         <env name="METASTYLE_TENANT_DB_PREFIX" value="meta_style_test_t"/>
+
+        <!--
+            The booking-verification pepper (docs/24-BOOKING-VERIFICATION.md §4).
+
+            A FIXED, PUBLICLY VISIBLE TEST KEY, and that is the point: the suite
+            asserts that a specific code verifies and a plain SHA-256 of the same
+            code does NOT match what is stored, which needs a key the test can
+            reason about. It is 32 bytes so the production doctor's length rule
+            is exercised by the same value every run.
+
+            No production secret is ever read from here, and nothing outside the
+            test database is encrypted with it.
+        -->
+        <env name="BOOKING_VERIFICATION_ACTIVE_KEY" value="v1"/>
+        <env name="BOOKING_VERIFICATION_KEY_V1" value="base64:dGVzdC1vbmx5LWJvb2tpbmctdmVyaWZpY2F0aW9uLWsx"/>
 
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="database"/>

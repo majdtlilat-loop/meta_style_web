@@ -37,11 +37,20 @@ use Illuminate\Support\Facades\DB;
  *
  * ## Closing is not reconciling
  *
- * It records when the session ended and who ended it. Counting the drawer,
- * variances and deposits are Finance (Phase 10).
+ * It records when the session ended and who ended it. The opening cash is
+ * recorded here, because it is a fact about the drawer when the session starts;
+ * counting the drawer at close, the expected amount and the variance are
+ * Finance's `CloseShiftWithCount`, which wraps this close in its own
+ * transaction (docs/20-FINANCE.md §§31–33).
  */
 final class ManageCashierShift
 {
+    /**
+     * A sanity bound on a counted drawer, in minor units — the same ceiling one
+     * sale may reach, so a mistyped extra zero is refused rather than stored.
+     */
+    public const MAX_DRAWER_MINOR = 3_000_000_000;
+
     public function __construct(
         private readonly SalesAccess $access,
         private readonly Audit $audit,
@@ -51,7 +60,7 @@ final class ManageCashierShift
      * @throws SaleFailed
      * @throws AuthorizationException
      */
-    public function open(string $branchUuid, User $actingUser, ?string $note = null, ?CarbonImmutable $now = null): CashierShift
+    public function open(string $branchUuid, User $actingUser, ?string $note = null, ?CarbonImmutable $now = null, ?int $openingCashMinor = null): CashierShift
     {
         /** @var Branch|null $branch */
         $branch = Branch::query()->where('uuid', $branchUuid)->first();
@@ -62,11 +71,15 @@ final class ManageCashierShift
 
         $this->access->ensure($actingUser, Permission::CashierShiftManage, $branch->id, 'You may not open a cashier shift.');
 
+        if ($openingCashMinor !== null && ($openingCashMinor < 0 || $openingCashMinor > self::MAX_DRAWER_MINOR)) {
+            throw SaleFailed::policy('The opening cash must be zero or more, and within a drawer range.');
+        }
+
         $at = ($now ?? CarbonImmutable::now())->utc();
 
         try {
             /** @var array{0: CashierShift, 1: bool} $outcome */
-            $outcome = DB::connection('tenant')->transaction(function () use ($branch, $actingUser, $note, $at): array {
+            $outcome = DB::connection('tenant')->transaction(function () use ($branch, $actingUser, $note, $at, $openingCashMinor): array {
                 // Serialises this person's shift operations. The users row
                 // always exists, so there is no gap-lock subtlety to reason
                 // about, unlike locking a shift row that may not exist yet.
@@ -88,6 +101,7 @@ final class ManageCashierShift
                     'active_user_id' => $actingUser->getKey(),
                     'status' => ShiftStatus::Open,
                     'opened_at' => $at,
+                    'opening_cash_minor' => $openingCashMinor,
                     'opening_note' => $this->note($note),
                 ]);
 

@@ -37,6 +37,19 @@ final readonly class Tenant
          * revocable, and it is never the internal sequence.
          */
         public ?string $publicKey = null,
+        /**
+         * The center's operational currency for its own customers and money
+         * (POS, invoices, prices). Null means the platform default. Separate
+         * from the currency Meta Style bills the center in.
+         */
+        public ?string $currency = null,
+        /**
+         * The center's registered address label: its public pages live on
+         * `{slug}.<base domain>`. Null for a center registered before hosts
+         * existed. Lets a link minted without a request (API, queue) still
+         * name the center's own host.
+         */
+        public ?string $slug = null,
     ) {}
 
     /**

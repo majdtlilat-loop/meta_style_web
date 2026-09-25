@@ -238,7 +238,7 @@ it('creates an employee with a login and an activation link, never a password', 
         $branch = Branch::query()->where('is_main', true)->firstOrFail();
 
         $result = app(CreateEmployee::class)(
-            new NewEmployee(name: ['en' => 'Sara'], branchIds: [$branch->id], email: 'sara@x.test'),
+            new NewEmployee(name: ['en' => 'Sara'], branchIds: [$branch->id], email: 'sara@x.test', phone: '+9647701230001'),
             $owner,
         );
 
@@ -264,7 +264,7 @@ it('lets staff redeem an activation link exactly once', function (): void {
         $owner = User::query()->where('is_owner', true)->firstOrFail();
 
         $result = app(CreateEmployee::class)(
-            new NewEmployee(name: ['en' => 'Sara'], email: 'sara@x.test'),
+            new NewEmployee(name: ['en' => 'Sara'], email: 'sara@x.test', phone: '+9647701230002'),
             $owner,
         );
 
@@ -324,7 +324,7 @@ it('cuts off access completely when an employee is deactivated', function (): vo
         $owner = User::query()->where('is_owner', true)->firstOrFail();
 
         $created = app(CreateEmployee::class)(
-            new NewEmployee(name: ['en' => 'Sara'], email: 'sara2@x.test'),
+            new NewEmployee(name: ['en' => 'Sara'], email: 'sara2@x.test', phone: '+9647701230003'),
             $owner,
         );
 

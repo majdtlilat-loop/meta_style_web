@@ -57,6 +57,19 @@ use Illuminate\Support\Str;
  * @property Carbon|null $credentials_expire_at
  * @property Carbon|null $access_expires_at
  * @property string|null $tenant_id
+ * @property string|null $requested_slug
+ * @property Carbon|null $email_verified_at
+ * @property Carbon|null $verification_expires_at
+ * @property string $source
+ * @property array<string, mixed>|null $options
+ * @property string|null $created_by_label
+ * @property string $center_name
+ * @property string $owner_name
+ * @property string|null $owner_email
+ * @property string|null $owner_phone
+ * @property string $locale
+ * @property string|null $error
+ * @property Carbon|null $created_at
  */
 final class Registration extends Model
 {
@@ -84,9 +97,13 @@ final class Registration extends Model
             'settled_at' => 'datetime',
             'credentials_expire_at' => 'datetime',
             'access_expires_at' => 'datetime',
+            'email_verified_at' => 'datetime',
+            'verification_sent_at' => 'datetime',
+            'verification_expires_at' => 'datetime',
             // Encrypted at rest: the control plane should not hold a usable
             // credential in readable form for the minutes it exists.
             'owner_password_hash' => 'encrypted',
+            'options' => 'array',
         ];
     }
 
@@ -284,6 +301,7 @@ final class Registration extends Model
             'uuid' => $this->uuid,
             'status' => $this->status->value,
             'center_name' => $this->center_name,
+            'slug' => $this->requested_slug,
             'tenant' => $this->tenant_id,
             'retryable' => $this->isRetryable(),
             'error' => $this->status === RegistrationStatus::Failed

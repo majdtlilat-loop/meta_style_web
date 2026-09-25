@@ -12,10 +12,13 @@ use App\Kernel\Entitlements\Entitlements;
 use App\Modules\Booking\Domain\BookingSettings;
 use App\Modules\Booking\Domain\Data\BookingActor;
 use App\Modules\Booking\Domain\Enums\AppointmentStatus;
+use App\Modules\Booking\Domain\Events\AppointmentCancelled;
+use App\Modules\Booking\Domain\Events\AppointmentConfirmed;
 use App\Modules\Booking\Domain\Exceptions\BookingFailed;
 use App\Modules\Booking\Domain\Models\Appointment;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -51,6 +54,7 @@ final class TransitionAppointment
         private readonly Entitlements $entitlements,
         private readonly BookingSettings $settings,
         private readonly Audit $audit,
+        private readonly Dispatcher $events,
     ) {}
 
     /**
@@ -116,6 +120,26 @@ final class TransitionAppointment
             };
 
             $appointment->forceFill($attributes)->save();
+
+            /*
+             * Announced inside the transaction, carrying identifiers only. Two
+             * of the five transitions are news to the customer: one the center
+             * made about their booking, and one that removes it. A listener
+             * that wants to tell them schedules that work for after this
+             * commits, so a notification can never undo a transition
+             * (docs/23-NOTIFICATIONS.md §11).
+             */
+            $announcement = match ($target) {
+                AppointmentStatus::Confirmed => new AppointmentConfirmed(
+                    (int) $appointment->getKey(), (int) $appointment->branch_id, (int) $appointment->customer_id),
+                AppointmentStatus::Cancelled => new AppointmentCancelled(
+                    (int) $appointment->getKey(), (int) $appointment->branch_id, (int) $appointment->customer_id),
+                default => null,
+            };
+
+            if ($announcement !== null) {
+                $this->events->dispatch($announcement);
+            }
         });
 
         $this->audit->record(new AuditEvent(

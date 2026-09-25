@@ -7,6 +7,7 @@ namespace App\Kernel\Audit;
 use App\Kernel\Audit\Enums\ActorType;
 use App\Kernel\Audit\Enums\AuditSource;
 use App\Kernel\Identity\Models\User;
+use App\Kernel\Platform\Identity\Models\PlatformUser;
 
 /**
  * Who did something, and from where.
@@ -46,6 +47,11 @@ final readonly class Actor
     public static function staff(User $user, AuditSource $source = AuditSource::Web): self
     {
         return new self(ActorType::Staff, $source, (string) $user->getKey(), $user->name);
+    }
+
+    public static function platform(PlatformUser $user, AuditSource $source = AuditSource::Web): self
+    {
+        return new self(ActorType::Platform, $source, (string) $user->getKey(), $user->name);
     }
 
     /** A queued job, which carries no human actor of its own. */

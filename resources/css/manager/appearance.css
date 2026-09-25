@@ -1,0 +1,200 @@
+/*
+ * Manager — appearance (menu, booking, cart, print) and center settings.
+ * Owned by one area: component styles for that area only.
+ * Shared primitives live in platform/components.css. Tokens only; logical
+ * properties only, so Arabic and Kurdish mirror the layout.
+ */
+
+/* Paper and guest-page previews show what PRINTS and what a GUEST sees, so they
+   keep paper colours in both Manager themes. Named once, here. */
+.appearance-page {
+    --paper: var(--brand-white);
+    --ink: #000000;
+    --ink-muted: #5b6472;
+    --ink-faint: #d9dce2;
+    --ink-soft: #b9bec8;
+    --guest-dark: #0d0f14;
+    --guest-dark-fg: #e8eaf0;
+    --guest-fg: #10131a;
+}
+
+/* ── Page layout: settings column + sticky aside ─────────────────────── */
+.appearance-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem);
+    gap: var(--space-5);
+    align-items: start;
+}
+.appearance-main, .appearance-aside { min-width: 0; }
+.appearance-aside { position: sticky; inset-block-start: calc(var(--topbar-height) + var(--space-4)); }
+@media (max-width: 72rem) {
+    .appearance-layout { grid-template-columns: minmax(0, 1fr); }
+    .appearance-aside { position: static; }
+}
+
+/* A radio group rendered as a segmented control: the checked label is the pressed one. */
+.appearance-page .segmented > label:has(input:checked),
+.appearance-page .segmented > label.is-active {
+    background: var(--color-surface-elevated);
+    color: var(--color-text);
+    box-shadow: var(--shadow-xs);
+}
+.appearance-page .segmented > label:has(input:disabled) { cursor: default; }
+.appearance-page .form-grid > .field { margin-block-end: 0; }
+.appearance-page .field > .segmented { max-width: 100%; }
+
+.appearance-switch { padding-inline: 0; }
+.card--flush .appearance-switch, .card--flush > .setting-row { padding-inline: var(--space-5); }
+.appearance-switch label { cursor: pointer; }
+
+/* ── Templates ────────────────────────────────────────────────────────── */
+.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: var(--space-3); }
+.template-card {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-elevated);
+    cursor: pointer;
+    transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+.template-card:hover { border-color: var(--color-primary-border); }
+.template-card:has(input:checked) { border-color: var(--color-primary); box-shadow: inset 0 0 0 1px var(--color-primary); background: var(--color-primary-soft); }
+.template-card:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.template-card:has(input:disabled) { cursor: default; }
+.template-card small { color: var(--color-text-muted); font-size: var(--text-xs); line-height: var(--leading-tight); }
+.template-card__swatch {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    gap: 3px;
+    height: 2.75rem;
+    padding: 4px;
+    margin-block-end: var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-muted);
+}
+.template-card__swatch[data-dark="true"] { background: var(--color-chocolate); }
+.template-card__swatch > span { border-radius: calc(var(--radius-sm) - 2px); }
+.template-card__swatch > span:nth-child(1) { background: var(--swatch-primary); }
+.template-card__swatch > span:nth-child(2) { background: var(--swatch-accent); }
+.template-card__swatch > span:nth-child(3) { background: var(--color-surface-elevated); opacity: .85; }
+
+/* ── Menu sections: order + visibility + per-section settings ────────── */
+.menu-sections { list-style: none; margin: 0; padding: 0; }
+.menu-section { padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--color-divider); background: var(--color-surface); }
+.menu-section:last-child { border-block-end: 0; }
+.menu-section[data-hidden] .menu-section__toggle strong { color: var(--color-text-muted); }
+.menu-section__head { display: flex; align-items: center; gap: var(--space-2); }
+.menu-section__toggle { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--space-3); cursor: pointer; }
+.menu-section__toggle > span { display: grid; min-width: 0; gap: .05rem; }
+.menu-section__toggle strong { font-size: var(--text-sm); }
+.menu-section__toggle small { color: var(--color-text-muted); font-size: var(--text-xs); line-height: var(--leading-tight); }
+.menu-section__move { display: inline-flex; gap: 2px; flex: 0 0 auto; }
+.menu-section__settings {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    margin-block-start: var(--space-3);
+    padding-inline-start: calc(2rem + var(--space-2));
+}
+.menu-section__settings .choice { font-size: var(--text-sm); }
+.menu-section__select { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-text-muted); }
+.menu-section__select select, .menu-section__select input { min-height: var(--control-height-sm); width: auto; min-width: 6.5rem; }
+.menu-section__select input { width: 5.5rem; min-width: 0; }
+@media (max-width: 30rem) {
+    .menu-section__settings { padding-inline-start: 0; }
+}
+
+/* ── The miniature of a guest page (booking / cart) ──────────────────── */
+.page-sketch {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--paper);
+    color: var(--guest-fg);
+    font-size: var(--text-sm);
+    overflow: hidden;
+}
+.page-sketch.bg-dark, .page-sketch.cart-bg-dark { background: var(--guest-dark); color: var(--guest-dark-fg); }
+.page-sketch.cart-bg-tint { background: var(--page-bg, var(--paper)); }
+.page-sketch__header { display: grid; gap: .15rem; }
+.page-sketch__header img { max-height: 1.75rem; width: auto; max-width: 6rem; object-fit: contain; }
+.page-sketch__header strong { font-size: var(--text-md); line-height: var(--leading-tight); }
+.page-sketch__header small { opacity: .75; white-space: pre-line; }
+.page-sketch.header-banner .page-sketch__header,
+.page-sketch.header-gradient .page-sketch__header { padding: var(--space-3); border-radius: var(--radius-sm); background: var(--header-bg); color: var(--on-primary); }
+.page-sketch__steps { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.page-sketch__steps li { display: flex; align-items: center; gap: var(--space-2); padding: .35rem .5rem; border: 1px solid rgb(127 127 127 / 25%); border-radius: var(--radius-sm); }
+.page-sketch__steps span { display: inline-grid; place-items: center; width: 1.2rem; height: 1.2rem; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: var(--text-2xs); font-weight: var(--weight-strong); }
+.page-sketch.steps-plain .page-sketch__steps span { display: none; }
+.page-sketch__cta { justify-self: start; padding: .4rem .9rem; border: 2px solid var(--accent); border-radius: .5rem; background: var(--accent); color: var(--on-accent); font-weight: var(--weight-strong); }
+.page-sketch.cta-outline .page-sketch__cta { background: transparent; color: var(--accent); }
+.page-sketch.cta-pill .page-sketch__cta { border-radius: var(--radius-pill); }
+.page-sketch__empty { display: grid; gap: .2rem; justify-items: center; padding: var(--space-3); border: 1px dashed rgb(127 127 127 / 40%); border-radius: var(--radius-sm); text-align: center; }
+.page-sketch__empty small { opacity: .75; white-space: pre-line; }
+.page-sketch__empty .page-sketch__cta { justify-self: center; margin-block-start: var(--space-1); }
+.page-sketch__summary { display: grid; gap: .1rem; padding: var(--space-2) var(--space-3); border: 1px solid rgb(127 127 127 / 25%); border-radius: var(--radius-sm); }
+.page-sketch__summary small { opacity: .75; }
+.page-sketch.cart-layout-centered .page-sketch__header { text-align: center; justify-items: center; }
+
+/* ── Print preview: paper on a desk ──────────────────────────────────── */
+.print-preview-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-block-end: var(--space-3); }
+.print-paper {
+    margin-inline: auto;
+    padding: 5mm 4mm;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xs);
+    background: var(--paper);
+    color: var(--ink);
+    font-size: 9pt;
+    box-shadow: var(--shadow-md);
+    inline-size: min(100%, 80mm);
+    transition: opacity var(--duration) var(--ease-out);
+}
+.print-paper[data-paper="a4"] { inline-size: 100%; padding: 8mm; font-size: 10pt; aspect-ratio: 210 / 297; overflow: hidden; }
+.print-paper[data-paper="a4"][data-density="compact"] { font-size: 9pt; padding: 6mm; }
+.print-paper[data-paper="receipt"][data-text-size="large"] { font-size: 10.5pt; }
+.print-paper[data-paper="ticket"] { text-align: center; display: grid; gap: 1.5mm; justify-items: center; }
+.print-paper[data-paper="ticket"] .print-logo { margin-inline: auto; }
+.print-paper.is-refreshing { opacity: .55; }
+.print-paper__center { font-weight: 700; }
+.print-paper__number { font-size: 28pt; font-weight: 700; letter-spacing: .05em; line-height: 1.1; }
+.print-paper__meta { font-size: 8.5pt; border-block-start: 1px dashed var(--ink); padding-block-start: 1.5mm; inline-size: 100%; }
+.print-paper__body { display: grid; gap: 2mm; margin-block: 3mm; padding-block: 2mm; border-block: 1px dashed var(--ink); }
+.print-paper__bar { display: block; block-size: 2.2mm; border-radius: 1mm; background: var(--ink-faint); inline-size: 100%; }
+.print-paper__bar--short { inline-size: 60%; }
+.print-paper__bar--total { inline-size: 45%; margin-inline-start: auto; background: var(--ink-soft); }
+.print-paper[data-paper="ticket"] .print-paper__bar { inline-size: 55%; }
+.print-paper__note { margin: 0 0 1mm; color: var(--ink-muted); font-size: 7.5pt; text-align: center; }
+
+/* ── Settings navigation extras ──────────────────────────────────────── */
+.settings-nav__heading {
+    display: block;
+    margin-block: var(--space-4) var(--space-1);
+    padding-inline: .7rem;
+    color: var(--color-text-subtle);
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-strong);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+.settings-nav .badge { margin-inline-start: auto; }
+.settings-nav .badge + .settings-nav__chevron { margin-inline-start: var(--space-1); }
+@media (max-width: 64rem) {
+    .settings-nav__heading { display: none; }
+}
+.settings-panel > * + * { margin-block-start: var(--space-5); }
+
+/* Dark theme: the paper and the page miniatures stay light on purpose — they
+   show what prints and what a guest sees — but sit on a softer frame. */
+[data-theme="dark"] .print-paper, [data-theme="dark"] .page-sketch:not(.bg-dark):not(.cart-bg-dark) { border-color: var(--color-border-strong); box-shadow: none; }
+
+@media (prefers-reduced-motion: reduce) {
+    .template-card, .print-paper { transition: none; }
+}
+
+/* An info tip in a card header sits at the inline END: open its bubble towards the start. */
+.appearance-page .card__header .info-tip::after { inset-inline-start: auto; inset-inline-end: 0; }

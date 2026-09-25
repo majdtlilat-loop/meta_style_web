@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Kernel\Entitlements\Entitlements;
-use App\Kernel\Localization\LanguageRegistry;
+use App\Modules\Queue\Application\DisplayPresentation;
 use App\Modules\Queue\Domain\Models\QueueDisplay;
+use App\View\Queue\DisplayPage;
 use Illuminate\Contracts\View\View;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
@@ -28,6 +29,11 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  * so a screen that lost its network for an hour recovers completely on its next
  * successful poll. Correctness never depends on delivery (§49).
  *
+ * What it does carry is the screen's PRESENTATION — its labels in every
+ * language it cycles and its promotional playlist — an allow-list built by
+ * `DisplayPresentation`, so the first paint is already in the right language
+ * and a language switch never needs the network (§9).
+ *
  * ## Fails closed
  *
  * Unknown key, inactive display, archived display and unknown center all answer
@@ -36,12 +42,11 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  */
 final class QueueDisplayPageController extends Controller
 {
-    public function __construct(
-        private readonly Entitlements $entitlements,
-        private readonly LanguageRegistry $languages,
-    ) {}
-
-    public function __invoke(string $center, string $display): View
+    /*
+     * Collaborators are resolved per call: the router keeps its controller
+     * instance, and a memoised plan must never outlive the request that read it.
+     */
+    public function __invoke(string $center, string $display, Entitlements $entitlements, DisplayPresentation $presentations, DisplayPage $page): View
     {
         $screen = QueueDisplay::query()
             ->with('branch')
@@ -55,18 +60,24 @@ final class QueueDisplayPageController extends Controller
         // A center that stopped paying for screens stops serving them, and the
         // answer is the same 404 — not a message explaining the billing state
         // of a business to whoever is standing in its waiting room.
-        if (! $this->entitlements->enabled('queue_display')) {
+        if (! $entitlements->enabled('queue_display')) {
             throw new NotFoundHttpException;
         }
 
-        $locale = $screen->locale ?? app()->getLocale();
+        $presentation = $presentations->forDisplay($screen, app()->getLocale());
 
-        return view('queue.display', [
-            'feedUrl' => route('api.queue.display', ['center' => $center, 'display' => $display]),
-            'locale' => $locale,
-            'direction' => $this->languages->direction($locale),
-            'branchName' => $screen->branch?->name?->get($locale),
-            'displayName' => $screen->name,
-        ]);
+        return view('queue.display', $page->data(
+            $screen,
+            $presentation,
+            // The feed has no session or cookie to resolve a language from, so it
+            // is told the one this page started in — otherwise its first poll
+            // would switch a screen on "automatic" into another language.
+            route('api.queue.display', ['center' => $center, 'display' => $display, 'locale' => $presentation['start']]),
+            // A screen that will chime or speak needs one touch when it is
+            // switched on — browsers refuse audio before a gesture. A silent
+            // screen starts straight away.
+            wantsSound: $screen->sound_enabled
+                || ($screen->voice_enabled && $entitlements->enabled('queue_voice')),
+        ));
     }
 }

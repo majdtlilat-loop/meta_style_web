@@ -9,11 +9,23 @@ to almost every session. Read the relevant `/docs` file before working in an are
 
 ## Current phase
 
-**Phase 9 complete** — Phase 8 plus sales, the POS till, journey checkout,
-immutable invoices, invoice numbering, cashier shifts, products, the customer
-digital invoice and browser-printed 80mm/A4 invoices.
-No payments, finance, loyalty or reporting yet.
-Do not start a phase without explicit authorisation. See `docs/13-ROADMAP.md`.
+**Phases 0–14 complete; Phase 15 (Super Admin, corporate landing and the Manager web app) is implemented and awaiting the user's review.** Phase 16 (the customer account) has not started.
+Phases 0–11 give loyalty, memberships and service packages; Phase 12 adds
+reviews, ratings, review capability links and IN-APP notifications. Phase 13
+adds booking verification codes, the WhatsApp channel, RAYAN and usage quotas,
+and closed its code, architecture and automated verification on a green FULL
+suite (1 479 passed, 7 861 assertions, exit 0).
+
+**Neither Phase 13 provider adapter has run against live credentials.** OpenAI
+and Meta's Cloud API are both implemented and contract-tested, and both are
+LIVE CREDENTIAL TEST PENDING (`docs/12` §12). Never describe either as
+production-verified. See `docs/13-ROADMAP.md`.
+
+Phase 14 added separate Standard and Advanced Reports, CSV/browser print,
+Reporting-only advanced reads and contextual report RAYAN with its own run
+allowance (`docs/28-REPORTS.md`). Still absent: gift cards, promo codes,
+referrals, SMS, push, email and Super Admin broadcast targeting. Do not start a phase without
+explicit authorisation.
 
 ## Stack constraints
 
@@ -23,6 +35,9 @@ Do not start a phase without explicit authorisation. See `docs/13-ROADMAP.md`.
   the component.** Middleware a tenant page depends on must be registered with
   `Livewire::addPersistentMiddleware()`, or it silently does not run there
   (ADR-045). `MiddlewareOrderGuard` asserts this at boot.
+- **Never name a Livewire action after a `$wire` alias** (`call`, `get`, `set`, `on`,
+  `dispatch`, …): the browser runs Livewire's built-in instead of the method, and PHP
+  tests cannot see it (ADR-102, `LivewireActionNamesTest`).
 - **Tenancy is `stancl/tenancy` v3** wrapped in Meta Style abstractions.
   Business code depends on `App\Kernel\Tenancy\Contracts\*`, never on package
   internals or package global helpers. `Stancl\*` is confined to
@@ -54,8 +69,14 @@ Do not start a phase without explicit authorisation. See `docs/13-ROADMAP.md`.
 - Never add a fallback or default tenant. Unresolved means the query **fails**;
   it must never silently hit another tenant or the control database.
 - Never build a storage path by hand — use `Kernel\Storage\MediaStore`.
-- Never derive a database name from user input. `TenantDatabaseName` generates
-  every one of them from the internal sequence (ADR-024).
+- Never build a database name by hand or from raw input.
+  `TenantDatabaseName::generate()` makes a NEW center's name once, at
+  provisioning: its slug (never its display name; no slug → `center`) reduced
+  to `[a-z0-9_]` (at most 24 characters) plus the internal sequence as the
+  unique suffix (`tenant_drbany_000003`). It is
+  stored in `tenants.tenancy_db_name` and never re-derived: a rename or a new
+  address never renames a database. Pre-ADR-106 names (`tenant_000003`) stay
+  valid (ADR-024, ADR-106).
 - Migrations never create databases; provisioning does (ADR-026).
 - **`dispatch()` inside tenant context**: the returned `PendingDispatch` queues
   the job in its destructor. Do not return it out of the tenant closure — an
@@ -311,9 +332,10 @@ availability or booking-rule logic outside `Modules/Booking`, stop.
 - **Financial audit commits with the change.** `sale.finalized`, `invoice.issued`,
   `sale.voided`, `sale.discarded` are written inside the Action's transaction
   (same tenant connection). Never move them after COMMIT (ADR-057).
-- **Entitlements (locked):** `pos` = sales, checkout, invoices, products, shifts;
-  `printing` = the 80mm/A4 paper only; `payments`/`finance` = Phase 10. There is
-  no `invoices` key. **`pos` gates NEW operations** (`SalesAccess::ensure`);
+- **Entitlements (locked):** `pos` = sales, checkout, invoices, products, shifts,
+  and desk cash/transfer collection; `printing` = the 80mm/A4 paper only;
+  `payments` = online payments and gateways; `finance` = expenses, counted
+  closes, the dashboard. There is no `invoices` key. **`pos` gates NEW operations** (`SalesAccess::ensure`);
   reading issued sales/invoices, the public invoice and link rotation use
   `authorize()`, and printing needs `printing` alone — the Booking downgrade rule.
 - **No payment concept** anywhere in Sales — no gateway, intent, refund, tip,
@@ -328,6 +350,220 @@ availability or booking-rule logic outside `Modules/Booking`, stop.
   is not a fiscal year; do not name it one without a verified requirement.
 - One sale is capped at 3 000 000 000 minor units so the discount allocation is
   exact in 64-bit integers. Do not raise it without revisiting the allocation.
+
+## Payments & Finance — `docs/19-PAYMENTS.md`, `docs/20-FINANCE.md`
+
+- **Sales never imports Payments or Finance; Payments never imports Finance.**
+  Operational modules import neither. A void asks through
+  `Sales\Contracts\SaleVoidGuard` (tag `sales.void_guards`); the ledger hears
+  `PaymentSucceeded` / `RefundSucceeded`. No model observers for money.
+- **A payment is one attempt against one issued invoice**; split = several.
+  Nothing about payment is written to `sales` or `invoices`.
+- **Lock order: sale, then invoice** (`InvoicePaymentLock`); a refund locks its
+  payment; cash locks the collector's shift. Check what may be collected under
+  the lock, through `InvoiceSettlement` — the only place payments are added up.
+- **A pending gateway payment reserves its amount.** Never let the desk collect it
+  again; never "fix" an overpayment with a refund.
+- **Settlement state comes from gross succeeded. Refunds never reopen an invoice.**
+- **Only a verified callback or an authenticated status query settles** — amount,
+  currency and reference matched. A browser returning from a provider proves
+  nothing. A mismatch stays pending and raises a `critical` security audit.
+- **Callbacks: no staff auth, no entitlement check, no raw body stored**,
+  idempotent by fingerprint. A downgrade never strands money already moving.
+- **Never invent a provider integration.** An adapter is built only from verified
+  provider documentation, with contract tests; otherwise it is an
+  `UnsupportedProvider`. FIB has NOT yet been run against its sandbox. A new
+  package needs a `docs/DECISIONS.md` entry before installation.
+- **Provider hosts are config, https only.** No credential field may carry a URL.
+- **Gateway credentials are per branch, `encrypted:array`, write-only**: never in
+  a presenter, API, Livewire state, log or audit row. Read them through
+  `readableCredentials()`, which fails closed after a key change.
+- **Cash never needs `payments`.** Losing an entitlement blocks the next operation;
+  history stays readable.
+- **`Ledger::append` is the only writer of `finance_entries`**, inside the money's
+  transaction; the ledger and drawer counts are append-only. Correct with a new
+  entry, never an edit. Written regardless of the `finance` entitlement.
+- **Expected cash counts `method = cash` only.** "From the drawer" is an explicit
+  claim, never inferred. A variance never blocks a close.
+- **Never call a figure revenue or profit.** Invoiced ≠ collected ≠ net movement.
+- **Finance windows are branch-local days** — in code and in tests
+  (`SeedsPayments::branchToday()`), never `now()->format('Y-m-d')`.
+- The center is the merchant: no platform custody, wallet, payouts or commission.
+
+## Loyalty, Memberships & Packages — `docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md`
+
+- **Money first (ADR-061).** Benefit listeners on `PaymentSucceeded`,
+  `RefundSucceeded`, `SaleFinalized`, `JourneyCompleted` only schedule work with
+  `Kernel\Database\AfterCommit` — never write in the money's transaction (the
+  OPPOSITE of the Finance ledger). Every reaction is idempotent and has a
+  `Reconciler`, run hourly by `metastyle:reconcile`. A scan enforces the pattern.
+- **Reads never write.** Queries, presenters, panels and the customer API never
+  repair or activate (architecture test). Actions that CHANGE a balance —
+  redeem, adjust, apply a package or membership benefit — call the module's
+  `reconcileCustomer()` first.
+- **A repair reproduces the event-time result (ADR-064).** Earning reads
+  `loyalty_rule_versions` (append-only, effective-from) and
+  `loyalty_earning_observations` (what Loyalty saw, per event), never the current
+  program row: the rule, the eligibility, the date and the expiry all come from
+  when the money was collected or the visit completed. Money collected while
+  `loyalty` was owned stays recoverable after a downgrade; money collected during
+  a gap never earns when it is granted back. Debits are never backdated.
+  **Observations are evidence, not the record** — the rule and expiry come from
+  the versions whether or not an observation survives, and an event with no
+  surviving observation is still eligible under the version in force then.
+- **Sales never imports the benefit modules.** They use `SaleBenefits`
+  (`benefit_discount`, one per line), `OfferingCatalog` (tag
+  `sales.offering_catalogs`), `SaleFinalizationGuard` (tag
+  `sales.finalization_guards`) and the `SaleVoided` / `SaleDraftDiscarded` events.
+  The till and customer page embed their own components (`TillBenefits`,
+  `CustomerBenefitsPanel`) rather than importing the modules.
+- **Lock order: the sale, then the benefit anchor** (loyalty account, customer
+  package, customer membership; activation: the customer row).
+- **Histories are append-only and the only truth**: `loyalty_transactions`,
+  `package_transactions`, `membership_benefit_usages` (`AppendOnlyHistory`), each
+  with one writer (`LoyaltyLedger`, `PackageLedger`, `MembershipUsageLedger`) and
+  `unique(source_type, source_uuid, kind)`. Correct with a new row, never an edit.
+- **Points balance is never negative (ADR-062).** A refund takes what the balance
+  covers; the rest is `unrecovered_points`, settled by `recovery` rows from later
+  earnings. Tiers use qualifying lifetime points. Each credit snapshots its own
+  `expires_at`; remaining points are FIFO from the history, expired lazily.
+- **Packages are consumed by performed service at checkout, never by booking**;
+  one unit per session; add-ons stay charged. Memberships and packages activate
+  when their invoice is SETTLED and stay usable after a downgrade until expiry.
+- **Void / discard give-back is synchronous inside the Sales transaction**
+  (ADR-063) — it moves no money; failure refuses the void.
+- **A benefit on a draft is a HOLD (ADR-065).** `ReleaseStaleBenefits` (hourly)
+  gives back points, sessions and uses held on a draft nobody touched for 24
+  hours and re-prices it; a published sale is not a hold. An abandoned cart can
+  never hold a customer's benefit for ever. Its unlocked query decides nothing:
+  draft, untouched and still-held are all re-checked under the sale lock, so a
+  release and a finalization can never both consume the same benefit.
+- **A package session needs proof of performance (ADR-065).** A visit line's
+  stage must be `completed`; a line typed at the till needs an explicit staff
+  confirmation. Adding a line to a cart is not performing a service.
+- A generated index or FK name over 64 characters breaks provisioning mid-migration
+  and every retry reports "table already exists". Name long ones explicitly; a
+  portability test enforces it.
+
+## Reviews & Notifications — `docs/22-REVIEWS.md`, `docs/23-NOTIFICATIONS.md`
+
+- **A review is about a visit that happened (ADR-066).** Eligibility is a
+  completed `ServiceJourney` with at least one completed `JourneyStage`. No
+  payment required, no customer account required, **and no appointment** — a
+  walk-in journey is as reviewable as a booked one. A public form addressed by
+  the center's key is a ratings board, not a record — there is none.
+- **`reviews` depends on no other entitlement.** Declaring `requires =>
+  ['booking']` would have the dependency closure silently drop it from a
+  walk-in-only center, and would tie a feature about past visits to one about
+  arranging future ones. Reviews never asks about `booking`.
+- **The capability IS the identity.** 256-bit token, SHA-256 at rest, plaintext
+  returned once and stored nowhere. A later read cannot show the link again:
+  reissuing mints a new one and retires the old (the `RotateInvoiceLink`
+  pattern). A signed-in customer needs no secret — their invitation is resolved
+  by uuid against their own record.
+- **A rating names a STAGE**, and the service and the employee are read from it.
+  Rating a skipped service, or an employee who was only booked, is unreachable
+  rather than refused.
+- **One visit, one invitation, one review** — three UNIQUE columns plus the
+  invitation row lock.
+- **The customer's words are immutable at the model.** Moderation changes
+  `status` and records who and why. `hidden` leaves the averages; `flagged`
+  stays in them. Nothing deletes a submitted review.
+- **`RatingSummary` is the only place an average exists.** No `average_rating`
+  column on a branch, a service or an employee.
+- **Losing `reviews` stops ISSUING and nothing else.** A link already given to a
+  customer keeps working; staff keep reading and moderating.
+- **Modules emit facts; Notifications listens (ADR-067).** Nothing imports
+  `Modules\Notifications` — three architecture tests enforce the direction. Every
+  handler schedules its work with `AfterCommit`, so a notification can never roll
+  back a booking, a payment, an activation or a review.
+- **IN-APP is the only channel.** Creating the recipient row is delivery; there
+  is no delivery status, no outbox and no provider. WhatsApp, SMS, email and push
+  are later phases, and a scan keeps their first call out of the module.
+- **Idempotency is in the schema**: `unique(type, source_type, source_uuid)` and
+  `unique(notification_id, recipient_kind, recipient_id)`. Nothing asks "have I
+  already sent this".
+- **A recipient is a KIND and an id.** `users` and `customer_accounts` have
+  unrelated sequences; every query filters on both. A guest has no inbox and none
+  is invented.
+- **Staff are targeted by permission and branch, never by role name.**
+- **Parameters, not sentences.** Messages render at read time from
+  `notifications_inbox.php`; no HTML and no customer text is ever stored in a
+  notification.
+- **Absent preference means ON**, and only a type that names a preference key can
+  be suppressed — never a cancellation, an invoice or a one-star review.
+
+## WhatsApp, RAYAN & Usage — `docs/24`, `docs/25`, `docs/26`, `docs/27`
+
+- **A booking has TWO identifiers (ADR-068).** `reference` (`B-000412`) is
+  public, quotable, **enumerable by design** and authenticates NOTHING;
+  `verification_code` is 10 Crockford characters that authenticate that ONE
+  booking. Never conflate them, and never use a uuid as either.
+- **The code is minted in `CreateAppointment`, never in a model event.** A
+  one-time secret returns through `BookingResult`; a model event has nowhere to
+  return anything to. `BookingEngine::book()` returns a `BookingResult`.
+- **`HMAC-SHA256` under a VERSIONED pepper, never a plain hash (ADR-069).** A
+  ~50-bit typeable code is brute-forceable offline from a database copy. The
+  pepper lives in `config/security.php`, never in a database, and is **not**
+  `APP_KEY`. Verify with the version **stored on the row** — never try every key.
+  A missing version THROWS (fail closed); public paths turn that into the same
+  generic refusal a wrong code gets, and report it. **There is no rehash.**
+- **Legacy bookings get a reference and NO code.** Minting one nobody asked for
+  creates a credential with no owner. Staff issue one on request.
+- **No public "forgot my booking code" endpoint**, ever. A reference alone, or a
+  reference plus a typed phone, is not authorisation. Three authorised paths
+  only: the customer's own account, authorised staff, a verified WhatsApp sender
+  who owns it. Issuing RETIRES the old code.
+- **Every failure of a code lookup answers the same null** — no such reference,
+  someone else's, wrong code, retired key. Distinguishing them turns the
+  enumerable reference space into a map of the center's book.
+- **Nothing happens before the webhook signature verifies (ADR-070).** Not a
+  conversation, a customer resolution, an AI run or a tool call. HMAC over the
+  **raw bytes** — never the re-encoded array. Rejected notifications are still
+  recorded; the endpoint answers an empty 403 for every cause.
+- **A verified sender is evidence for THAT interaction, never a stored flag.** No
+  `whatsapp_verified`, and `phone_verified_at` stays untouched (ADR-040). The
+  same number in two centers is two unrelated people. No `Customer` and no
+  `CustomerAccount` is created from a conversation — the Booking Engine's
+  resolver does that when somebody actually books.
+- **`unknown` is a real delivery state and is NEVER auto-retried.** Meta's send
+  takes no idempotency key, so a retry is a second copy at the customer's phone.
+  Only a `failed` raises an alert.
+- **Persist first, send second.** The inbound message commits before anything
+  else can fail, so the messages that most need a human are never the ones lost.
+- **RAYAN never imports Conversations.** The channel calls the assistant, not the
+  reverse. Beware `{@see}` on a cross-module class: Pint turns it into a real
+  import, and an architecture test caught exactly that.
+- **Ten tools, an enum, an exact allow-list.** No SQL, HTTP, class-name or
+  action-name tool. No schema declares `customer_id`, `phone`, `tenant` or
+  `user_id` — identity comes from `ToolContext`, and unlisted arguments are
+  dropped. **A prompt enforces nothing**; every real check is application code.
+- **The loop always terminates**: max turns, max tool calls across the run, max
+  output tokens, wall clock. An identical tool call within a run returns the
+  first result rather than booking twice.
+- **A turn is re-checked after the model answers.** `takeOver()` is allowed from
+  `ai_active` and a provider call takes seconds, so the status routing checked is
+  stale by the time the reply arrives. `ConversationRouter` re-reads it before
+  sending or handing off — otherwise the bot replies underneath a colleague, and
+  a hand-off pushes `human_active` back to `human_requested`, unassigning the
+  person already on the thread.
+- **Every failure ends in a human.** Provider outage, timeout, refusal,
+  truncation, exhausted quota, loop ceiling — all hand off, and nothing ever
+  invents an answer.
+- **A customer is NEVER told the center ran out of a paid allowance.**
+- **`Kernel\Usage` stays generic.** Resource codes are strings from
+  `config/usage.php`; the Kernel must never learn what RAYAN or WhatsApp is, and
+  an architecture test scans for those words.
+- **Counted once** (`unique(resource, source_type, source_uuid)` +
+  `insertOrIgnore`), **spent atomically** (one conditional UPDATE whose
+  affected-row count is the answer). NULL means unlimited — no sentinels. Only
+  `ai_runs` is enforced; tokens are metered and refuse nothing (ADR-072).
+- **Increase now, decrease next period** unless an audited `enforce_immediately`.
+  `AllowanceSync` repairs upward only, keyed on a VERSION not a value.
+- **Provider destinations are platform config (ADR-071).** No URL column on any
+  tenant table; `phone_number_id` is path-segment validated before it reaches a
+  URL; a center never supplies a key or names an unapproved model.
+- **Both adapters are implemented, neither is live-verified (ADR-073).** Say so.
 
 ## Testing — `docs/11-TESTING-STRATEGY.md`
 
@@ -345,6 +581,21 @@ availability or booking-rule logic outside `Modules/Booking`, stop.
   message as a needle and never fails. Use one needle per negation, or
   `expect(in_array(...))->toBeFalse($message)`. `SafeguardsTest` refuses it.
 - Definition of Done includes updating the relevant `/docs` file in the same PR.
+- **Three gate tiers** (`docs/11-TESTING-STRATEGY.md` §9.1). The full suite takes
+  about 3.5–4 hours locally, so it is not the per-change gate:
+  - **FAST** — `composer check:fast` (Pint, PHPStan, Architecture, Unit) plus the
+    module you touched, e.g. `php vendor/bin/pest tests/Feature/Payments`.
+    Normal iterative development.
+  - **PHASE** — `composer check:phase<N>` (FAST + TenantIsolation + the phase's
+    modules + their direct regression files). Before closing a phase. Each phase
+    REPOINTS the script; `check:phase15` is the current one (it replaced `check:phase14`).
+  - **FULL** — `composer check` / `composer check:full`, unchanged. Release
+    candidates, major architecture changes, CI/nightly, or explicit request.
+    Not after every ordinary phase correction.
+- **Tiers are chosen, never weakened.** Never delete, skip or loosen a test to
+  make a tier faster, and never enable parallel Pest against the shared local
+  server. When a lower tier is used, report the last FULL result honestly — never
+  imply a full run passed that did not run.
 
 ## Conventions
 
@@ -359,15 +610,19 @@ availability or booking-rule logic outside `Modules/Booking`, stop.
 ## Commands
 
 ```bash
-composer check          # pint --test + phpstan + pest  (run this before finishing)
+composer check:fast     # FAST:  pint --test + phpstan + Architecture + Unit  (~3 min)
+composer check:phase15  # PHASE: FAST + TenantIsolation + every Super Admin / Manager module
+composer check          # FULL:  pint --test + phpstan + the whole Pest suite  (~3.5–4 h; CI runs this)
+composer check:full     # alias of `composer check`
 composer fix            # pint (write)
-composer test           # pest
+composer test           # pest (whole suite)
+composer test:fast      # Architecture + Unit only
 composer stan           # phpstan/larastan
 ```
 
 ```bash
 php artisan metastyle:control:migrate
-php artisan metastyle:tenant:provision "Center Name" --domain=center.test
+php artisan metastyle:tenant:provision "Center Name" --domain=center.test --slug=center-name
 php artisan metastyle:tenant:migrate --all
 php artisan metastyle:tenant:migrate --retry-failed
 php artisan metastyle:tenant:status --drift
@@ -375,6 +630,9 @@ php artisan metastyle:roles:sync --all
 php artisan metastyle:registration:retry <uuid>
 php artisan metastyle:registration:sweep --dry-run
 php artisan metastyle:idempotency:sweep
+php artisan metastyle:reconcile --days=3
+php artisan metastyle:notifications:sweep
+php artisan metastyle:usage:project
 php artisan metastyle:doctor --production
 ```
 
@@ -398,5 +656,11 @@ Requires a running MySQL/MariaDB server; see
 
 ## Before you finish
 
-- Run `composer check` and confirm it is green.
-- Report failures with the actual output. Do not claim work is done unverified.
+- Ordinary change: run `composer check:fast` and the touched module's tests, and
+  confirm they are green.
+- Closing a phase: run `composer check:phase<N>` and `php artisan
+  metastyle:doctor`, and confirm both are green.
+- Run `composer check` (FULL) only for a release candidate, a major architecture
+  change, CI/nightly, or when explicitly asked.
+- Report failures with the actual output, and say which tier ran. Do not claim
+  work is done unverified, and do not claim a FULL pass that did not happen.

@@ -8,6 +8,7 @@ use App\Modules\Booking\Domain\Data\AvailabilityQuery;
 use App\Modules\Booking\Domain\Data\AvailabilitySlot;
 use App\Modules\Booking\Domain\Data\BookingActor;
 use App\Modules\Booking\Domain\Data\BookingRequest;
+use App\Modules\Booking\Domain\Data\BookingResult;
 use App\Modules\Booking\Domain\Enums\AppointmentStatus;
 use App\Modules\Booking\Domain\Exceptions\BookingFailed;
 use App\Modules\Booking\Domain\Models\Appointment;
@@ -67,9 +68,21 @@ interface BookingEngine
      * lock. A slot returned by {@see availability()} a moment ago can still be
      * refused here, and that is correct behaviour rather than a race.
      *
+     * ## Why this one returns a result object
+     *
+     * Every new booking is given a VERIFICATION CODE — the short secret that
+     * later proves somebody holds this booking — and that code is never stored
+     * raw. There is therefore no later read that could produce it: the return
+     * of this call is the only moment it exists, so the return carries it
+     * (docs/24-BOOKING-VERIFICATION.md §3).
+     *
+     * A channel is free to ignore `$result->verificationCode`; WhatsApp does,
+     * deliberately (§12). What a channel may not do is assume it can fetch the
+     * code afterwards.
+     *
      * @throws BookingFailed
      */
-    public function book(BookingRequest $request, BookingActor $actor): Appointment;
+    public function book(BookingRequest $request, BookingActor $actor): BookingResult;
 
     /**
      * Moves an appointment, with the same validation and locking as booking it.

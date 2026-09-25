@@ -11,10 +11,12 @@ use App\Modules\Booking\Application\AppointmentScopeResolver;
 use App\Modules\Booking\Domain\Models\Appointment;
 use App\Modules\Branches\Domain\Models\Branch;
 use App\Modules\ServiceJourney\Domain\Enums\JourneySource;
+use App\Modules\ServiceJourney\Domain\Models\JourneyStage;
 use App\Modules\ServiceJourney\Domain\Models\ServiceJourney;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -76,7 +78,24 @@ final class JourneyBoardQuery
                 'items.employee',
             ])
             ->whereIn('branch_id', $branches->pluck('id')->all())
-            ->blocking()
+            /*
+             * Still EXPECTED (booked or confirmed), or already a VISIT.
+             *
+             * `blocking()` alone dropped every booked visit the moment it
+             * finished: CompleteJourney moves the appointment to `completed`
+             * and CancelVisit to `cancelled`, so the Completed and Abandoned
+             * columns only ever showed walk-ins. A visit that happened stays
+             * on the day it happened; a booking cancelled before anybody
+             * arrived (no journey) still leaves the board.
+             */
+            ->where(function (Builder $visible): void {
+                $visible->blocking()->orWhereIn(
+                    'id',
+                    DB::connection('tenant')->table('service_journeys')
+                        ->whereNotNull('appointment_id')
+                        ->select('appointment_id'),
+                );
+            })
             ->orderBy('starts_at')
             ->orderBy('id');
 
@@ -144,10 +163,16 @@ final class JourneyBoardQuery
         $appointment?->load(['customer', 'items.service', 'items.employee']);
 
         $journey->load([
+            'stages.item.employee',
             'stages.employee',
             'stages.department',
             'stages.resources.resource',
-            'handoffs',
+            'handoffs.fromEmployee',
+            'handoffs.toEmployee',
+            'handoffs.fromStage.item',
+            'handoffs.toStage.item',
+            'handoffs.fromDepartment',
+            'handoffs.toDepartment',
         ]);
 
         // A walk-in's customer is on the journey; a booked visit's is on the
@@ -157,6 +182,75 @@ final class JourneyBoardQuery
         }
 
         return new BoardRow($appointment, $journey);
+    }
+
+    /**
+     * One visit by uuid, scope-checked, loaded for the detail panel.
+     *
+     * The ONE way a staff screen turns a uuid it was sent into a visit, so a
+     * crafted request can never open a visit in a branch — or, for a view-own
+     * employee, a chair — the viewer does not work in.
+     *
+     * @throws AuthorizationException
+     * @throws ModelNotFoundException<ServiceJourney>
+     */
+    public function find(User $viewer, string $journeyUuid): BoardRow
+    {
+        $journey = ServiceJourney::query()
+            ->with('appointment')
+            ->where('uuid', $journeyUuid)
+            ->firstOrFail();
+
+        return $this->detail($journey, $viewer);
+    }
+
+    /**
+     * One stage by uuid, for an Action — after the same scope check.
+     *
+     * @throws AuthorizationException
+     * @throws ModelNotFoundException<ServiceJourney>
+     */
+    public function stage(User $viewer, string $stageUuid): JourneyStage
+    {
+        $stage = JourneyStage::query()
+            ->with(['journey.appointment', 'item'])
+            ->where('uuid', $stageUuid)
+            ->firstOrFail();
+
+        $this->detail($stage->journey, $viewer);
+
+        return $stage;
+    }
+
+    /**
+     * A booking on the board, for checking the customer in.
+     *
+     * Branch scope here; the Action checks the permission and the branch again
+     * under its own rules. Returned untyped to callers that must not name the
+     * Booking model (BookingBoundaryTest).
+     *
+     * @throws AuthorizationException
+     * @throws ModelNotFoundException<Appointment>
+     */
+    public function appointment(User $viewer, string $appointmentUuid): Appointment
+    {
+        $appointment = Appointment::query()->where('uuid', $appointmentUuid)->firstOrFail();
+
+        if (! $viewer->canAccessBranch((int) $appointment->branch_id)) {
+            throw new AuthorizationException('You may not work in that branch.');
+        }
+
+        return $appointment;
+    }
+
+    /**
+     * Has this center anything to read back on the board — a visit or a
+     * booking? Decides whether a center without `booking` sees its read-only
+     * history or the upgrade page.
+     */
+    public function hasHistory(): bool
+    {
+        return ServiceJourney::query()->exists() || Appointment::query()->exists();
     }
 
     /**
@@ -174,6 +268,11 @@ final class JourneyBoardQuery
     {
         $journeys = ServiceJourney::query()
             ->with([
+                // `stages.item.employee`: the card shows who was BOOKED beside
+                // who is doing it, and a walk-in stage (no item) reads its own
+                // service snapshot. Lazy here is a query per stage, and an
+                // exception outside production (preventLazyLoading).
+                'stages.item.employee',
                 'stages.employee',
                 'stages.department',
                 'stages.resources.resource',
@@ -265,6 +364,7 @@ final class JourneyBoardQuery
         $query = ServiceJourney::query()
             ->with([
                 'customer',
+                'stages.item.employee',
                 'stages.employee',
                 'stages.department',
                 'stages.resources.resource',

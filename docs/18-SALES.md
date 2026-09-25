@@ -7,6 +7,10 @@
 > (numbering), ADR-056 (browser printing, no PDF/QR dependency), ADR-057
 > (financial-consistency corrections: visit completion, hashed links, downgrade,
 > in-transaction audit).
+>
+> Phase 10 added Payments and Finance beside Sales without giving Sales a payment
+> concept: see `docs/19-PAYMENTS.md` and `docs/20-FINANCE.md`. The Phase 10 touches
+> here are the void guard (§20), opening cash (§§13–14) and the money routes (§§42–46).
 
 ## 1. Seven concepts, permanently separate
 
@@ -18,7 +22,7 @@
 | QueueTicket | the **waiting and calling** around a stage | `queue_tickets` |
 | **Sale** | what was **charged** | `sales`, `sale_items`, `sale_item_addons`, `sale_adjustments` |
 | **Invoice** | what was **published** — immutable | `invoices`, `invoice_items` |
-| Payment | money **settlement** — Phase 10 | — |
+| Payment | money **settlement** — Payments, Phase 10 (`docs/19-PAYMENTS.md`) | `payments`, `refunds` |
 
 A sale may point at a visit. It never becomes one, and **no financial state is
 ever written to the appointment, journey or queue tables** — a TenantIsolation
@@ -56,7 +60,9 @@ it**, because it never became financial history and keeping abandoned carts
 forever puts noise in every sales query. A **finalized** sale is frozen (§19). A
 **voided** sale keeps its invoice.
 
-No payment states. "Unpaid" and "settled" belong to Payment (Phase 10).
+No payment states. "Unpaid", "partial" and "paid" belong to Payments
+(docs/19 §9), which reads the invoice and never writes to `sales` or `invoices`.
+Sales never imports Payments or Finance (architecture test).
 
 ## 5. Sale lines
 
@@ -176,8 +182,8 @@ method (earlier line wins a tie), so the shares always sum exactly.
 product is ≤ 9 × 10¹⁸ and fits a signed 64-bit integer — exact arithmetic with no
 floats and no big-number dependency.
 
-Rounding a cash total to the smallest note in circulation is a settlement concern
-(Phase 10).
+Rounding a cash total to the smallest note in circulation is a settlement concern.
+Phase 10 did not add it: the desk records the exact amount it takes.
 
 ## 11. Pricing seam
 
@@ -223,9 +229,15 @@ user's row first. A second tap returns the open shift. One person may hold shift
 at two branches.
 
 **Finalizing a sale requires your open shift at that branch**, and stamps it on
-the sale — the attribution Phase 10 reconciliation needs. Closing your own shift
+the sale — the attribution reconciliation needs. Closing your own shift
 needs `cashier_shift.manage`; closing someone else's needs
-`cashier_shift.supervise`. No float, counted cash, variance or deposit.
+`cashier_shift.supervise`.
+
+**Phase 10:** a shift may record `opening_cash_minor` when it opens. With the
+`finance` entitlement the till closes through Finance's `CloseShiftWithCount`,
+which snapshots expected cash, the count and the variance and calls this close
+in the same transaction (docs/20 §§31–33); without it, closing is unchanged.
+Cash payments and cash refunds lock the shift, so they serialise with a close.
 
 ## 14–16. Invoice
 
@@ -306,7 +318,12 @@ A finalized sale never returns to draft.
 `sale.void` + a reason (3–190 chars), finalized sales only. Records who, when, why
 on the sale; clears `active_journey_id`; leaves the invoice row byte-identical.
 The digital and printed invoice show **VOID** and the void date, never the reason.
-A repeated void returns the same outcome. **No refund** — Phase 10.
+A repeated void returns the same outcome. **A void never refunds.** Since
+Phase 10, `CloseSale::void` runs every `Sales\Contracts\SaleVoidGuard` (container
+tag `sales.void_guards`) inside its transaction with the sale locked; Payments'
+guard refuses while an online payment or a refund is pending, or while money is
+collected — refund it explicitly first (docs/19 §27). Sales imports nothing from
+Payments to do this.
 
 ## 20, 28. Digital invoice
 
@@ -459,14 +476,44 @@ add/patch/delete; `…/price-override` set/clear; `sales/{uuid}/customer`;
 `sales/{uuid}/adjustments` add/delete; `finalize`; `void`;
 `journeys/{uuid}/checkout`; `invoices/{uuid}`, `…/printable`, `…/share-link`;
 `branches/{uuid}/invoice-prefix`; `cashier-shifts` open/current/close; `products`.
-**No payment endpoint** — a test scans the route table.
+**No payment endpoint on Sales.** Since Phase 10 every money route is served by a
+Payments surface (docs/19 §57); `SalesSurfaceTest` checks the route table for
+exactly that, and that `SalesController` and the till answer none. The till and
+the sales list embed Payments' invoice money panel without importing Payments.
 
-**UI:** `/center/pos` (the till — branch, shift, search and barcode, cart, variation
+**UI:** `/manager/pos` (the till — branch, shift, search and barcode, cart, variation
 and add-ons, adjustments, customer, finalize, the freshly minted invoice link,
 print) with a **Booked · Performed · Charged** table for visit checkouts, a
 "visit still in progress" notice that disables finalize, and no Remove on visit
-lines; `/center/sales` (a day's sales, detail, void, issue a new customer link,
+lines; `/manager/sales` (sales history, detail, void, issue a new customer link,
 print — readable without `pos`); the public invoice page.
+
+**Phase 15 Manager.** The till reads its catalog through `TillCatalog`
+(services by category, products, a service's options and extras — display
+only; `LinePriceResolver` prices the line), adds an exact barcode or SKU on
+Enter, steps quantities through `ChangeSaleLine`, labels a benefit discount as
+a discount (`is_discount` from `AdjustmentType::isDiscount()`; it used to read
+"Surcharge"), finds customers through the CRM's own `CustomerQuery` (a phone
+is a search key only with `customer.contact.view`; contact is masked by the
+presenter) and adds a walk-in through `SaveCustomer`. A service rung up at the
+till may name who performed it (`AddSaleLine` / `ChangeSaleLine::update` key
+`employee`, stored in the existing `sale_items.employee_id`): the employee must
+be active, assigned to the sale's branch and eligible for that service — the
+eligibility Booking applies (`LineEmployees`). A visit line's performer comes
+from its stage and is never re-typed; the staff presenter shows the name, the
+public invoice never does, and nothing computes a commission from it. Without
+`pos` it is the upgrade state. **Sales history** (`SalesQuery::history`) covers whole
+branch-local days, searches an invoice number or customer name, filters by
+state and by who issued the sale, paginates, and shows issued/voided counts and
+totals per currency (`historyTotals`); a malformed `?date=` is refused with a
+message instead of reaching Carbon. The detail drawer shows the adjustments,
+cashier, local issue time and source; it opens from `?sale=`. **POS settings**
+(`/manager/pos/settings`, `pos`): products named once per enabled content
+language and priced by parsing what was typed (`SaveProduct` create, update,
+off-sale, archive), and each branch's invoice prefix (`SetBranchInvoicePrefix`)
+— the page the prefix refusal already pointed to. The customer link is now
+published under the center's own host (`InvoiceLinks::url` takes the request's
+center slug; only a hostless API call still falls back to the public key).
 
 ## 47–49. Concurrency
 
@@ -503,3 +550,26 @@ Payment gateways, payment intents, webhooks, refunds, settlements, tips, deposit
 expense/revenue accounting, financial reports, cash reconciliation, commissions,
 loyalty, memberships, promo codes, gift cards, reviews, notifications, WhatsApp,
 RAYAN, advanced reports, PDF, QR, inventory.
+
+## 59. Phase 11 additions — benefit seams
+
+Loyalty, Memberships and Packages change what a sale charges without Sales
+naming any of them (docs/21 §4, ADR-063):
+
+- **`SaleBenefits`** — a `benefit_discount` adjustment with an opaque
+  `source_type` / `source_reference` (unique), optionally on one line (one
+  benefit per line), applied and withdrawn under `SaleMutation`, drafts only.
+  `AdjustSale` cannot add or remove one; `ChangeSaleLine` refuses a line carrying
+  one; the customer cannot change under one.
+- **Line-targeted discounts in `SalePricing`** (§12): a targeted fixed discount is
+  bounded by its line; percentages are taken from what targeted discounts left;
+  sale-wide discounts are allocated over what each line still owes. With none,
+  every result is exactly Phase 9's.
+- **`offering` lines** priced by an `OfferingCatalog` (tag
+  `sales.offering_catalogs`); quantity is always 1. `GET sales/offerings` lists
+  what may be sold.
+- **`SaleFinalizationGuard`** (tag `sales.finalization_guards`) — asked before
+  finalizing.
+- **Events**, dispatched inside the Sales transaction: `SaleFinalized`,
+  `SaleVoided`, `SaleDraftDiscarded`.
+

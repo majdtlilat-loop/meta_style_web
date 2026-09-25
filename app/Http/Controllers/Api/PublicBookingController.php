@@ -99,7 +99,7 @@ final class PublicBookingController extends Controller
             'note' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $appointment = $engine->book(
+        $booked = $engine->book(
             new BookingRequest(
                 branchUuid: (string) $data['branch'],
                 lines: BookingLine::listFromArray($data['services']),
@@ -122,8 +122,13 @@ final class PublicBookingController extends Controller
 
         return ApiResponse::data(
             // The customer shape, not the staff one: no internal notes, no
-            // source, no record of who created it.
-            $presenter->forCustomer($appointment->load(['items.employee', 'items.addons', 'branch'])),
+            // source, no record of who created it — plus the verification code,
+            // which a guest has no other way of ever obtaining: they have no
+            // account to regenerate it from (docs/24-BOOKING-VERIFICATION.md §8).
+            $presenter->withVerificationCode(
+                $presenter->forCustomer($booked->appointment->load(['items.employee', 'items.addons', 'branch'])),
+                $booked->verificationCode,
+            ),
             201,
         );
     }

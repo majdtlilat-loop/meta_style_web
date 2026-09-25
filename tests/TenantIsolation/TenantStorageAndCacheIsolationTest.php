@@ -7,6 +7,7 @@ use App\Kernel\Storage\MediaStore;
 use App\Kernel\Tenancy\Exceptions\TenantNotResolved;
 use Illuminate\Cache\TaggableStore;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\File;
 
 /*
 |--------------------------------------------------------------------------
@@ -76,6 +77,42 @@ it('refuses to touch storage with no tenant bound', function (): void {
     // root, where the next tenant could read it.
     app(MediaStore::class)->put(MediaCollection::Branding, 'orphan', 'txt');
 })->throws(TenantNotResolved::class);
+
+it('lets the framework write a real-time facade in a center that has never stored a file', function (): void {
+    $alpha = $this->provisionTenant('Alpha');
+
+    // Every center that existed before tenancy made this directory, and every
+    // center on a freshly started application server, has an empty storage
+    // root: provisioning ran on another machine, or before the fix. So start
+    // from nothing — the directory below exists only because tenancy made it.
+    $root = storage_path('tenants/'.$alpha->id);
+    File::deleteDirectory($root);
+
+    expect(is_dir($root))->toBeFalse();
+
+    try {
+        $this->asTenant($alpha, function () use ($alpha): void {
+            $cache = storage_path('framework/cache');
+
+            expect(is_dir($cache))->toBeTrue()
+                ->and(str_replace('\\', '/', $cache))->toEndWith('tenants/'.$alpha->id.'/framework/cache');
+
+            /*
+             * The first use of a `Facades\…` class in a process writes its stub
+             * to that directory. Livewire's file uploads use one, so without
+             * the directory a center's first upload was a 500 ("tempnam(): file
+             * created in the system's temporary directory"). A name no other
+             * code uses, so this process has certainly not loaded it yet.
+             */
+            $facade = 'Facades\\MetaStyleProbe\\RealTime'.bin2hex(random_bytes(6));
+
+            expect(class_exists($facade))->toBeTrue()
+                ->and(glob($cache.'/facade-*.php'))->not->toBeEmpty();
+        });
+    } finally {
+        File::deleteDirectory($root);
+    }
+});
 
 it('keeps the same logical cache key separate per tenant', function (): void {
     $alpha = $this->provisionTenant('Alpha');

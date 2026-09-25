@@ -71,6 +71,21 @@ final class MenuPublisher
     }
 
     /**
+     * What the owner's preview shows: the draft if there is one, else what is
+     * live, else the defaults. A READ — unlike {@see draft()} it never creates
+     * a row, so opening a preview changes nothing.
+     */
+    public function previewPresentation(): MenuPresentation
+    {
+        /** @var MenuVersion|null $draft */
+        $draft = MenuVersion::query()->draft()->first();
+
+        return $draft?->presentation()
+            ?? $this->published()?->presentation()
+            ?? MenuPresentation::default();
+    }
+
+    /**
      * Saves the draft. Validation happens in {@see MenuPresentation}, so an
      * unknown template, an unlisted section or a colour that is not a colour
      * never reaches the database.

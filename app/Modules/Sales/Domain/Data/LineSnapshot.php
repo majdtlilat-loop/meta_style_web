@@ -34,7 +34,33 @@ final readonly class LineSnapshot
         public ?int $productId = null,
         public ?int $journeyStageId = null,
         public ?int $employeeId = null,
+        /** For an offering: the catalog type and the item's uuid in it. */
+        public ?string $offeringType = null,
+        public ?string $offeringReference = null,
     ) {}
+
+    /**
+     * The same line, recording who performed it.
+     */
+    public function withEmployee(?int $employeeId): self
+    {
+        return new self(
+            kind: $this->kind,
+            name: $this->name,
+            unitPriceMinor: $this->unitPriceMinor,
+            priceSource: $this->priceSource,
+            currency: $this->currency,
+            variationName: $this->variationName,
+            addons: $this->addons,
+            serviceId: $this->serviceId,
+            serviceVariationId: $this->serviceVariationId,
+            productId: $this->productId,
+            journeyStageId: $this->journeyStageId,
+            employeeId: $employeeId,
+            offeringType: $this->offeringType,
+            offeringReference: $this->offeringReference,
+        );
+    }
 
     public function addonsUnitTotalMinor(): int
     {

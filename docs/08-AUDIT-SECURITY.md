@@ -111,6 +111,21 @@ Notes on specific columns:
   than leaving an unaudited invoice reported as issued (ADR-057).
   The sale, its lines and its immutable invoice are the financial record; the
   audit log answers "who changed what" and is never where a total is read from.
+- **Phase 10 payments** (category `finance`, written inside the money's
+  transaction): `payment.cash_recorded`, `payment.manual_recorded`,
+  `payment.gateway_initiated` / `_succeeded` / `_failed` / `_cancelled`,
+  `payment.gateway_mismatch` (category `security`, `critical` — a provider
+  reported an amount, currency or reference that does not match; the payment is
+  not settled), `refund.recorded` / `requested` / `succeeded` / `failed` (with the
+  reason), and `payment_gateway.configured` / `enabled` / `disabled` (category
+  `config` — provider and environment, never a credential value).
+  **Phase 10 finance**: `finance.expense.posted`, `finance.expense.voided`
+  (`warning`, with the reason), `finance.expense_category.created` / `updated` /
+  `archived`, `cashier_shift.reconciled` (expected, counted, variance; `warning`
+  when they differ). Never in any payload: credentials, signatures, provider
+  bodies, authorization headers, invoice link secrets, payer names or account
+  data. Amounts are read from payments, refunds and the ledger — never from audit
+  (docs/19 §§49–55, docs/20 §§49–50).
   **Implemented in Phase 6** as `booking.appointment.{created, confirmed,
   rescheduled, cancelled, completed, no_show}` and
   `booking.appointment_note.{created, deleted}`. `before`/`after` share one
@@ -174,7 +189,23 @@ operation.
 `audit_logs` is indexed on `(occurred_at)`, `(actor_type, actor_id, occurred_at)`,
 `(target_type, target_id, occurred_at)`, `(category, occurred_at)`,
 `(correlation_id)`. It will be one of the largest tables per tenant; monthly
-partitioning is planned from Phase 12.
+partitioning is planned from Phase 13.
+
+### Capability links (Phase 9, 10, 12)
+
+Three surfaces are now reached by a bearer secret rather than a session: the
+customer's invoice, paying it online, and leaving a review. All three follow the
+same rule — 256 bits of CSPRNG output, SHA-256 at rest, the plaintext returned
+once by the call that minted it and stored nowhere (ADR-035, ADR-058, ADR-066).
+
+A stored secret therefore cannot be read back. "Send it again" MINTS A NEW ONE
+and retires the old, which is also what a desk wants when a link went to the
+wrong person. Neither the plaintext nor its digest ever reaches a log line, an
+audit row, a notification payload or a presenter.
+
+Unknown, revoked and expired collapse into ONE generic 404. Distinguishing them
+confirms that a particular link existed — which, for a review link, is a visit,
+which is a customer.
 
 ## 7. How audit is written
 
@@ -241,6 +272,15 @@ Customer funds settle to the **center's** merchant account. Meta Style never
 takes custody. This is a product decision with a large regulatory consequence
 and must not be quietly changed by an integration.
 
+**As implemented in Phase 10** (docs/19 §§19–24, 83): `PaymentsBoundaryTest`
+scans every control and tenant migration for card, CVV, PIN, OTP and track-data
+column names, and refuses a body, headers or signature column on
+`payment_webhook_events`. No provider flow collects card data: FIB's customer
+pays in the FIB app by code or link. A provider callback is believed only after
+its signature is verified or its status is read back with the center's own
+credentials; an amount mismatch never settles and raises a `critical` security
+event.
+
 ## 10. Secrets and encryption
 
 | Secret | Storage |
@@ -258,6 +298,14 @@ remembering to omit them at each call site.
 Key rotation: `APP_KEY` rotation requires a re-encryption command that walks
 every tenant database. It must exist before the first paying customer, not
 after — it is far harder to add later.
+
+> **Status after Phase 10: the command does not exist.** Gateway credentials
+> (`payment_gateway_accounts.credentials`, `encrypted:array`) are the first
+> tenant data that needs it. Until it ships, rotate only with the old key in
+> `APP_PREVIOUS_KEYS`; credentials that stop decrypting fail closed rather than
+> erroring (docs/19 §Operations). Gateway credentials are excluded from
+> serialisation by `$hidden` and by allow-listed presenters, and never passed to
+> audit at all; the central `Kernel\Audit\Redactor` is the backstop.
 
 ## 11. Transport, headers, sessions
 
@@ -297,10 +345,12 @@ after — it is far harder to add later.
 | Platform API | platform user |
 | Review links | token, single-use |
 | WhatsApp webhook | signature verification first, then per-tenant limit |
+| Payment provider callbacks | center + gateway account, 120/min; verification before any write |
+| Public invoice payment | center + IP, 6/min — every attempt reaches a provider |
 | Exports | per user per hour, and audited |
 
 Public booking is the most abusable surface: it is unauthenticated, it writes,
-and it can send messages. It needs its own limits from Phase 6, not Phase 13.
+and it can send messages. It needs its own limits from Phase 6, not Phase 14.
 
 ### 13.1 A limit is only a limit if every worker shares the bucket
 

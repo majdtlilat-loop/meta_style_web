@@ -31,9 +31,9 @@ if it ever becomes necessary — but extraction is not a goal.
   connection: "control"                          connection: "tenant"
                  │                                             │
      ┌───────────▼───────────┐                    ┌────────────▼────────────┐
-     │   meta_style_control  │                    │  tenant_000001          │
-     │                       │                    │  tenant_000002          │
-     │ tenants               │  ── metadata ──▶   │  tenant_000003          │
+     │   meta_style_control  │                    │  tenant_drbany_000005   │
+     │                       │                    │  tenant_salon_000006    │
+     │ tenants               │  ── metadata ──▶   │  tenant_000001 (legacy) │
      │ tenant_domains        │     resolves       │  ...                    │
      │ plans / entitlements  │                    │                         │
      │ subscriptions         │                    │  identical schema in    │
@@ -307,5 +307,5 @@ Tracked in full in `DECISIONS.md`; summarised here.
 | Tenant context leaking into a queued job | Critical | Fail-closed connection guard + mandatory isolation test suite (`02`, `11`). |
 | Entitlement checks bypassed in a non-HTTP channel (WhatsApp, AI) | High | Gate inside Actions, not only in route middleware (`05`). |
 | Booking logic duplicated per channel | High | One Booking Engine; channels are adapters only (`04`). |
-| Reporting queries on tenant DBs degrading the operational workload | Medium | Read replica / async report jobs from Phase 12 (`12`). |
+| Reporting queries on tenant DBs degrading the operational workload | Medium | Read replica / async report jobs from Phase 13 (`12`). |
 | Cost of per-tenant backups and restores | Medium | Logical per-DB dumps; documented restore runbook (`12`). |

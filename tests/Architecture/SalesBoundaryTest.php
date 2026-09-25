@@ -18,7 +18,7 @@ use App\Modules\Sales\Domain\Models\InvoiceItem;
 |   QueueTicket     the waiting and calling around a stage
 |   Sale            what was charged
 |   Invoice         what was published — immutable
-|   Payment         money settlement — Phase 10
+|   Payment         money collected against an invoice — Payments (Phase 10)
 |
 | The dependency points ONE WAY. Sales may read the visit, the booking, the
 | catalog and the customer. None of them may learn Sales exists: a center with
@@ -135,11 +135,26 @@ it('never writes the invoice tables through the query builder', function (): voi
 
     foreach (salesSourceLines(['app/']) as $line) {
         if (preg_match('/table\(\s*[\'"](invoices|invoice_items)[\'"]\s*\)/', $line['source']) === 1) {
-            $violations[] = $line['path'].':'.$line['line'].'  '.trim($line['source']);
+            if (! in_array($line['path'], [
+                'app/Modules/Sales/Application/SqlSalesReportReader.php',
+                'app/Modules/Payments/Application/SqlPaymentReportReader.php',
+            ], true)) {
+                $violations[] = $line['path'].':'.$line['line'].'  '.trim($line['source']);
+            }
         }
 
         if (preg_match('/Invoice(Item)?::query\(\)[^;]*->(update|delete|forceDelete|increment|decrement)\(/', $line['source']) === 1) {
             $violations[] = $line['path'].':'.$line['line'].'  '.trim($line['source']);
+        }
+    }
+
+    $sources = appSourceFiles();
+    $readers = ($sources['app/Modules/Sales/Application/SqlSalesReportReader.php'] ?? '')
+        .($sources['app/Modules/Payments/Application/SqlPaymentReportReader.php'] ?? '');
+
+    foreach (['->insert(', '->update(', '->delete(', '->truncate(', '->increment(', '->decrement('] as $write) {
+        if (str_contains($readers, $write)) {
+            $violations[] = 'A report reader contains '.$write;
         }
     }
 
@@ -154,23 +169,44 @@ it('keeps invoices immutable at the model', function (): void {
         ->and($itemUses)->toContain(ImmutableDocument::class);
 });
 
-it('introduces no payment, gateway or settlement concept', function (): void {
+arch('sales does not depend on payments or finance')
+    // Phase 10 made money real, and it points ONE way: Payments reads the
+    // invoice, Finance reads both. A sale voids through the neutral
+    // `SaleVoidGuard` contract, never by asking Payments (docs/19-PAYMENTS.md §4).
+    ->expect('App\Modules\Sales')
+    ->not->toUse(['App\Modules\Payments', 'App\Modules\Finance']);
+
+arch('the till and the sales list collect no money themselves')
+    // They EMBED the invoice's money panel (`InvoicePayments`). Taking cash,
+    // starting a gateway payment or refunding is that component's, so a second
+    // collection path cannot grow inside the till.
+    ->expect(['App\Livewire\Center\PointOfSale', 'App\Livewire\Center\Sales', 'App\Livewire\Center\Till', 'App\Livewire\Center\PosSettings'])
+    ->not->toUse('App\Modules\Payments');
+
+it('keeps payment, gateway and settlement concepts out of Sales itself', function (): void {
     /*
-     * Phase 10. A `payment_status` column, a gateway client or a refund method
-     * added "while we are here" would be a second, disagreeing record of money
-     * before Payment exists to own it (§§21, 58).
+     * A `payment_status` column on a sale, a gateway client or a refund method
+     * added to Sales "while we are here" would be a second, disagreeing record
+     * of money beside the one Payments owns (§§21, 58; docs/19-PAYMENTS.md §4).
      */
     $pattern = '/zaincash|fastpay|\bfib\b|\bqi\b|payment|refund|gateway|webhook|settle|payout|tip_minor|deposit/i';
 
     $violations = [];
 
-    foreach (salesSourceLines(['app/Modules/Sales/', 'app/Http/Controllers/Api/SalesController.php', 'app/Livewire/Center/PointOfSale.php']) as $line) {
+    foreach (salesSourceLines(['app/Modules/Sales/', 'app/Http/Controllers/Api/SalesController.php']) as $line) {
         if (preg_match($pattern, $line['source']) === 1) {
             $violations[] = $line['path'].':'.$line['line'].'  '.trim($line['source']);
         }
     }
 
-    foreach (glob(dirname(__DIR__, 2).'/database/migrations/tenant/2026_09_10_*.php') ?: [] as $file) {
+    $salesMigrations = array_merge(
+        glob(dirname(__DIR__, 2).'/database/migrations/tenant/2026_09_10_*.php') ?: [],
+        glob(dirname(__DIR__, 2).'/database/migrations/tenant/2026_09_14_100001_*.php') ?: [],
+    );
+
+    expect($salesMigrations)->not->toBeEmpty();
+
+    foreach ($salesMigrations as $file) {
         foreach (explode("\n", (string) file_get_contents($file)) as $index => $source) {
             $trimmed = ltrim($source);
 
@@ -209,7 +245,7 @@ it('renders invoices without unescaped output or center-authored markup', functi
      */
     $violations = [];
 
-    foreach (salesSourceLines(['resources/views/sales/', 'resources/views/livewire/center/pointOfSale', 'resources/views/livewire/center/sales'], includeViews: true) as $line) {
+    foreach (salesSourceLines(['resources/views/sales/', 'resources/views/livewire/center/pointOfSale', 'resources/views/livewire/center/sales', 'resources/views/livewire/center/pos-settings'], includeViews: true) as $line) {
         if (str_contains($line['source'], '{!!') || str_contains($line['source'], '@php')) {
             $violations[] = $line['path'].':'.$line['line'].'  '.trim($line['source']);
         }

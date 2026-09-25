@@ -58,7 +58,7 @@ function riBook(array $seed, string $time = '10:00'): Appointment
             customer: CustomerRef::details('Sara', '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 it('keeps two centers\' resources apart, even when their ids collide', function (): void {

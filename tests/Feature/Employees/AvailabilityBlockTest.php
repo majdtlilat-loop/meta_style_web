@@ -76,7 +76,7 @@ function abBook(array $seed, string $time): Appointment
             customer: CustomerRef::details('Sara', '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 it('takes blocked time out of availability', function (): void {

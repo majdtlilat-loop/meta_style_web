@@ -111,9 +111,9 @@ final class TenantLocales
         $fallback = $this->platformFallback();
 
         if (! $this->tenants->isBound()) {
-            // No tenant, no center preferences. Platform defaults, so a
-            // control-plane page still renders in a sensible language.
-            return $this->cache[$key] = ['enabled' => [$fallback], 'default' => $fallback];
+            // Corporate and platform surfaces expose the complete platform
+            // registry. There is no tenant preference to narrow it.
+            return $this->cache[$key] = ['enabled' => $this->languages->supported(), 'default' => $fallback];
         }
 
         $default = $this->read(self::DEFAULT_KEY);

@@ -16,10 +16,26 @@
 
 return [
 
+    'domains' => [
+        /*
+         * APP_URL is the only source for the scheme, base host and optional
+         * development port. PlatformHosts derives corporate, Super Admin and
+         * center origins from it while preserving the subdomain-only model.
+         */
+        'wildcard_dns_ready' => env('METASTYLE_WILDCARD_DNS_READY', false),
+        'wildcard_tls_ready' => env('METASTYLE_WILDCARD_TLS_READY', false),
+        'reserved' => [
+            'www', 'superadmin', 'admin', 'api', 'mail', 'smtp', 'cdn',
+            'assets', 'static', 'support', 'status', 'docs',
+        ],
+    ],
+
     'tenancy' => [
         /*
-         * Prefix for tenant database names, completed by the zero-padded
-         * internal tenant sequence: tenant_000001, tenant_000002, ...
+         * Prefix for tenant database names. A new center's name is the prefix,
+         * its slug as a label and the zero-padded internal sequence:
+         * tenant_drbany_000003 (ADR-106). Centers provisioned earlier keep
+         * tenant_000001-style names.
          *
          * Configurable for one reason: the test suite creates and drops real
          * databases, and must not be able to touch a developer's actual tenant
@@ -92,6 +108,7 @@ return [
     ],
 
     'registration' => [
+        'verification_minutes' => env('METASTYLE_REGISTRATION_VERIFICATION_MINUTES', 60),
         /*
          * How long a registration may sit in `preparing` before it is treated
          * as stuck. Provisioning takes seconds; anything near this is a fault.

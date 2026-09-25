@@ -160,6 +160,21 @@ it('reports middleware ordering as part of readiness', function (): void {
     expect(checksByName(true)['middleware order']->isOk())->toBeTrue();
 });
 
+it('warns about an unconfigured reporting connection until Advanced Reports are activated', function (): void {
+    config()->set('reports.advanced_enabled', false);
+    config()->set('database.connections.reporting_template.host', null);
+    config()->set('database.connections.reporting_template.username', null);
+
+    $check = checksByName(true)['advanced reports connection'];
+
+    expect($check->isWarning())->toBeTrue()
+        ->and($check->detail)->toContain('Standard Reports remain available');
+
+    config()->set('reports.advanced_enabled', true);
+
+    expect(checksByName(true)['advanced reports connection']->isFailure())->toBeTrue();
+});
+
 it('exits non-zero from metastyle:doctor when production rules are broken', function (): void {
     config()->set('cache.default', 'array');
     config()->set('app.debug', true);
@@ -168,6 +183,10 @@ it('exits non-zero from metastyle:doctor when production rules are broken', func
 });
 
 it('exits zero from metastyle:doctor on a sound production configuration', function (): void {
+    config()->set('app.url', 'https://platform.example');
+    config()->set('tenancy.central_domains', ['platform.example', 'superadmin.platform.example']);
+    config()->set('metastyle.domains.wildcard_dns_ready', true);
+    config()->set('metastyle.domains.wildcard_tls_ready', true);
     config()->set('cache.default', 'redis');
     config()->set('cache.limiter', null);
     config()->set('queue.default', 'redis');

@@ -102,7 +102,7 @@ it('pins a collation both engines have', function (): void {
     /** @var array{connections: array<string, array<string, mixed>>} $database */
     $database = require dirname(__DIR__, 2).'/config/database.php';
 
-    foreach (['control', 'tenant_template'] as $connection) {
+    foreach (['control', 'tenant_template', 'reporting_template'] as $connection) {
         $settings = $database['connections'][$connection];
 
         // MySQL 8 defaults to utf8mb4_0900_ai_ci, which does not exist in
@@ -114,8 +114,8 @@ it('pins a collation both engines have', function (): void {
             ->and($settings['strict'])->toBeTrue();
     }
 
-    // And no third connection has slipped in alongside them.
-    expect(array_keys($database['connections']))->toBe(['control', 'tenant_template']);
+    // Reporting is the sole additional template and is bound lazily per tenant.
+    expect(array_keys($database['connections']))->toBe(['control', 'tenant_template', 'reporting_template']);
 });
 
 it('keeps composite index widths inside the InnoDB key limit', function (): void {
@@ -138,6 +138,56 @@ it('keeps composite index widths inside the InnoDB key limit', function (): void
     }
 
     expect($violations)->toBe([]);
+});
+
+it('keeps every generated index and foreign key name within the 64-character identifier limit', function (): void {
+    // Laravel names an index `{table}_{columns}_{type}` unless it is given a
+    // name. Past 64 characters both engines refuse it — AFTER `create table`
+    // has already run, so the table exists, the migration is not recorded, and
+    // every retry fails on "table already exists" instead of the real cause.
+    $violations = [];
+    $checked = 0;
+
+    foreach (migrationSources() as $path => $contents) {
+        preg_match_all("/Schema::(?:create|table)\(\s*'(\w+)'\s*,\s*function\b(.*?)\n        \}\);/s", $contents, $blocks, PREG_SET_ORDER);
+
+        foreach ($blocks as [, $table, $body]) {
+            $names = [];
+
+            // ->index(['a', 'b']) / ->unique([...]) with no explicit name.
+            preg_match_all("/->(index|unique)\(\[([^\]]*)\]\s*\)/", $body, $composite, PREG_SET_ORDER);
+
+            foreach ($composite as [, $type, $columns]) {
+                preg_match_all("/'(\w+)'/", $columns, $cols);
+                $names[] = $table.'_'.implode('_', $cols[1]).'_'.$type;
+            }
+
+            // $table->foo('col')...->unique() / ->index() / ->constrained().
+            preg_match_all("/\\\$table->\w+\('(\w+)'[^;]*?->(unique|index)\(\)/", $body, $inline, PREG_SET_ORDER);
+
+            foreach ($inline as [, $column, $type]) {
+                $names[] = $table.'_'.$column.'_'.$type;
+            }
+
+            preg_match_all("/->foreignId\('(\w+)'\)[^;]*->constrained\(/", $body, $foreign);
+
+            foreach ($foreign[1] as $column) {
+                $names[] = $table.'_'.$column.'_foreign';
+            }
+
+            foreach ($names as $name) {
+                $checked++;
+
+                if (strlen($name) > 64) {
+                    $violations[] = sprintf('%s  %s (%d characters) — give it an explicit name', $path, $name, strlen($name));
+                }
+            }
+        }
+    }
+
+    // The scan must find the names it checks, or it checks nothing.
+    expect($checked)->toBeGreaterThan(100)
+        ->and($violations)->toBe([]);
 });
 
 /*

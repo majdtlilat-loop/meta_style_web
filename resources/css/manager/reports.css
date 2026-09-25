@@ -1,0 +1,153 @@
+/*
+ * Manager — Standard Reports. Owned by one area: styles for that page only.
+ * The charts, KPI tiles, cards and tables are the shared components
+ * (platform/charts.css, platform/components.css); this file lays them out
+ * as one analytics workspace. Tokens only, logical properties only (RTL),
+ * both themes through the same tokens.
+ */
+
+.std-reports { display: grid; gap: var(--space-5); min-width: 0; }
+
+/* ══ Report views: one tab per report ═══════════════════════════════════ */
+.std-tabs {
+    display: flex; gap: var(--space-1); margin: 0; overflow-x: auto; scrollbar-width: none;
+    border-block-end: 1px solid var(--color-border);
+}
+.std-tabs::-webkit-scrollbar { display: none; }
+.std-tabs > a {
+    position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; gap: .45rem;
+    min-height: 2.75rem; padding: .55rem .85rem; margin-block-end: -1px;
+    border-block-end: 2px solid transparent; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    color: var(--color-text-muted); font-size: var(--text-sm); font-weight: var(--weight-strong); text-decoration: none; white-space: nowrap;
+    transition: color var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out);
+}
+.std-tabs > a .ui-icon { color: var(--color-icon); }
+.std-tabs > a:hover { background: var(--color-hover); color: var(--color-text); }
+.std-tabs > a[aria-current="page"] { border-block-end-color: var(--color-primary); color: var(--color-text); }
+.std-tabs > a[aria-current="page"] .ui-icon { color: var(--color-primary-text); }
+.std-tabs > a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+
+/* ══ Toolbar: period first, then the narrowing ══════════════════════════ */
+.std-toolbar {
+    display: grid; gap: var(--space-3); min-width: 0;
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+    background: var(--color-surface); box-shadow: var(--shadow-xs);
+}
+.std-toolbar__period { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); min-width: 0; }
+.std-presets { flex: 0 1 auto; }
+.std-toolbar__summary {
+    display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: .15rem var(--space-2);
+    margin: 0; color: var(--color-text-subtle); font-size: var(--text-sm);
+}
+.std-toolbar__summary strong { color: var(--color-text); font-weight: var(--weight-strong); }
+.std-toolbar__summary .spinner { align-self: center; color: var(--color-primary-text); }
+.std-toolbar__toggle { display: none; margin-inline-start: auto; }
+.std-toolbar__toggle .badge { min-height: 1.1rem; padding: 0 .35rem; }
+
+.std-custom { display: grid; grid-template-columns: repeat(2, minmax(0, 12rem)) auto; align-items: end; gap: var(--space-3); }
+.std-custom .field { margin: 0; }
+.std-custom__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+.std-filters {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 11.5rem), 1fr)); align-items: end; gap: var(--space-3);
+    padding-block-start: var(--space-3); border-block-start: 1px solid var(--color-divider);
+}
+.std-filters .field { margin: 0; gap: .25rem; }
+.std-filters .field > label { color: var(--color-text-muted); font-size: var(--text-xs); }
+.std-filters select { width: 100%; }
+.std-filters__reset { display: flex; align-items: end; }
+
+/* ══ The report ════════════════════════════════════════════════════════ */
+.std-body { display: grid; gap: var(--space-5); min-width: 0; transition: opacity var(--duration) var(--ease-out); }
+.std-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
+.std-heading__title { display: grid; gap: .2rem; min-width: 0; }
+.std-heading h2 { margin: 0; font-size: var(--text-xl); }
+.std-heading__meta { display: inline-flex; align-items: center; gap: .35rem; margin: 0; color: var(--color-text-subtle); font-size: var(--text-xs); }
+.std-heading__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+.std-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 13.5rem), 1fr)); gap: var(--space-3); }
+.std-kpis .kpi { min-width: 0; }
+.std-kpis .kpi__label { display: inline-flex; align-items: center; gap: .3rem; }
+.std-kpis .kpi__value { font-size: var(--text-2xl); }
+.std-kpis .kpi__difference { color: var(--color-text-muted); font-weight: var(--weight-strong); font-variant-numeric: tabular-nums; }
+
+.std-section { display: grid; gap: var(--space-3); min-width: 0; }
+.std-section__title {
+    display: flex; align-items: center; gap: var(--space-3); margin: 0;
+    color: var(--color-text-muted); font-size: var(--text-xs); font-weight: var(--weight-strong);
+    letter-spacing: .06em; text-transform: uppercase;
+}
+.std-section__title::after { flex: 1 1 auto; block-size: 1px; background: var(--color-divider); content: ""; }
+html[lang="ar"] .std-section__title, html[lang="ckb"] .std-section__title { letter-spacing: 0; text-transform: none; font-size: var(--text-sm); }
+
+.std-grid { display: flex; flex-wrap: wrap; gap: var(--space-4); min-width: 0; }
+.std-card { flex: 1 1 20rem; min-width: 0; }
+.std-card--wide { flex-basis: 100%; }
+.std-card .chart-card__head h4 { margin: 0; font-size: var(--text-md); }
+.std-card__title { display: inline-flex; align-items: center; gap: .3rem; min-width: 0; }
+.std-card.chart-card--flush > .chart-card__head { padding-block-end: var(--space-3); }
+.std-empty { border: 1px dashed var(--color-border-strong); border-radius: var(--radius-lg); background: var(--color-surface); }
+
+/* ══ Detail tables ═════════════════════════════════════════════════════ */
+.std-table .table-shell { margin: 0; border: 0; border-block-start: 1px solid var(--color-divider); border-radius: 0 0 var(--radius-lg) var(--radius-lg); box-shadow: none; }
+.std-table th .table-sort { gap: .25rem; }
+.std-table th.numeric .table-sort { flex-direction: row-reverse; }
+.std-table th[aria-sort="ascending"], .std-table th[aria-sort="descending"] { color: var(--color-text); }
+.std-table td.numeric, .std-table th.numeric { text-align: end; font-variant-numeric: tabular-nums; }
+/* Paged rows stay hidden even where stacked cards set their own display. */
+.std-table tbody > tr[hidden] { display: none !important; }
+.std-table .table-shell:focus-visible, .std-table .table-sort:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.std-change { font-weight: var(--weight-strong); font-variant-numeric: tabular-nums; color: var(--color-text-muted); }
+.std-change[data-tone="good"] { color: var(--delta-positive); }
+.std-change[data-tone="bad"] { color: var(--delta-negative); }
+.std-pager { justify-content: space-between; border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+.std-pager__range { font-variant-numeric: tabular-nums; }
+.std-pager__buttons { display: inline-flex; gap: var(--space-1); }
+
+/* ══ Loading another view: its shape, not a blank page ════════════════ */
+.std-switching { display: grid; gap: var(--space-5); }
+.std-switching .std-card { min-block-size: 14rem; }
+
+@media(max-width:64rem){
+    .std-kpis { grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr)); }
+}
+@media(max-width:48rem){
+    .std-toolbar { padding: var(--space-3); }
+    .std-toolbar__toggle { display: inline-flex; }
+    .std-toolbar__summary { flex: 1 1 100%; order: 3; }
+    .std-presets { flex: 1 1 100%; }
+    .std-filters { display: none; grid-template-columns: minmax(0, 1fr); }
+    .std-filters.is-open { display: grid; }
+    .std-custom { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .std-custom__actions { grid-column: 1 / -1; }
+    .std-custom__actions > * { flex: 1 1 auto; justify-content: center; }
+    .std-heading { align-items: flex-start; flex-direction: column; }
+    .std-heading__actions { width: 100%; }
+    .std-heading__actions > * { flex: 1 1 auto; justify-content: center; }
+    .std-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+    .std-kpis .kpi { padding: var(--space-3); }
+    .std-kpis .kpi__value { font-size: var(--text-xl); }
+    .std-kpis .kpi .sparkline { display: none; }
+    .std-grid { gap: var(--space-3); }
+    .std-card { flex-basis: 100%; }
+    .std-table .table-shell { border-block-start: 0; padding: 0 var(--space-3) var(--space-3); }
+}
+@media(max-width:24rem){
+    .std-kpis { grid-template-columns: minmax(0, 1fr); }
+}
+@media(prefers-reduced-motion:reduce){
+    .std-body, .std-tabs > a { transition: none; }
+}
+
+/* Printing a report prints the report, not the application around it. */
+@media print {
+    .app-sidebar, .app-topbar, .app-scrim, .skip-link, .std-tabs, .std-toolbar, .std-heading__actions, .std-pager,
+    .std-switching, .reports-pro-link, .page-header__actions, .chart__data, .ms-tooltip, .info-tip { display: none !important; }
+    .app-shell, .app-workspace, .app-main { display: block !important; width: auto !important; margin: 0 !important; padding: 0 !important; }
+    .std-reports, .std-body { gap: var(--space-3); }
+    .std-body { display: grid !important; opacity: 1 !important; }
+    .std-kpis .kpi, .std-card, .std-empty { break-inside: avoid; box-shadow: none; background: var(--color-canvas); }
+    .std-table tbody > tr[hidden] { display: table-row !important; }
+    .std-table .table-shell { overflow: visible; }
+}

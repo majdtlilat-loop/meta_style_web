@@ -7,6 +7,7 @@ namespace App\Livewire\Auth;
 use App\Kernel\SaaS\Models\Registration;
 use App\Kernel\SaaS\RegistrationSession;
 use App\Kernel\Tenancy\Infrastructure\TenantModel;
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Modules\Onboarding\Application\RegistrationService;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -23,7 +24,7 @@ use Livewire\Component;
  * the URL — is what opens it (ADR-035). Someone who is handed this link sees
  * exactly what someone who guessed the uuid sees: nothing.
  */
-#[Layout('components.layouts.app')]
+#[Layout('layouts.platform-public.app')]
 final class RegistrationStatus extends Component
 {
     public string $uuid = '';
@@ -52,8 +53,17 @@ final class RegistrationStatus extends Component
         }
 
         $this->notice = $registrations->retry($registration)
-            ? __('Trying again…')
-            : __('This registration can no longer be retried. Please register again.');
+            ? __('center_auth.status.retrying')
+            : __('center_auth.status.retry_unavailable');
+    }
+
+    public function resendVerification(RegistrationService $registrations): void
+    {
+        $registration = $this->registration();
+
+        $this->notice = $registration instanceof Registration && $registrations->resendVerification($registration)
+            ? __('center_auth.status.verification_resent')
+            : __('center_auth.status.verification_resend_failed');
     }
 
     public function render(): mixed
@@ -66,11 +76,17 @@ final class RegistrationStatus extends Component
             // page must not become a way to confirm a registration exists.
             'status' => $registration?->status->value ?? 'unknown',
             'retryable' => $registration?->isRetryable() ?? false,
-            'centerKey' => $registration?->tenant_id === null
+            'centerUrl' => $registration?->tenant_id === null
                 ? null
-                : TenantModel::query()
-                    ->whereKey($registration->tenant_id)->value('public_key'),
+                : $this->centerUrl($registration->tenant_id),
         ]);
+    }
+
+    private function centerUrl(string $tenantId): ?string
+    {
+        $slug = TenantModel::query()->whereKey($tenantId)->value('slug');
+
+        return is_string($slug) ? app(PlatformHosts::class)->centerUrl($slug) : null;
     }
 
     /**

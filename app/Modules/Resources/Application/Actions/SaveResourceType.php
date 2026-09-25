@@ -87,7 +87,7 @@ final class SaveResourceType
 
         if ($required > 0) {
             throw ValidationException::withMessages([
-                'resource_type' => "This type is still required by {$required} service(s). Remove those requirements first.",
+                'resource_type' => trans_choice('manager_staff.errors.type_required_by', $required, ['count' => $required]),
             ]);
         }
 
@@ -95,7 +95,7 @@ final class SaveResourceType
 
         if ($resources > 0) {
             throw ValidationException::withMessages([
-                'resource_type' => "This type still has {$resources} active resource(s). Archive them first.",
+                'resource_type' => trans_choice('manager_staff.errors.type_has_resources', $resources, ['count' => $resources]),
             ]);
         }
 
@@ -103,6 +103,27 @@ final class SaveResourceType
 
         $this->audit->record(new AuditEvent(
             action: 'resources.type.archived',
+            category: AuditCategory::Config,
+            actor: Actor::staff($actingUser),
+            targetType: ResourceType::class,
+            targetId: $type->uuid,
+            targetLabel: (string) $type->name,
+        ));
+
+        return $type;
+    }
+
+    /**
+     * Brings a retired type back, so services can require it again.
+     */
+    public function restore(ResourceType $type, User $actingUser): ResourceType
+    {
+        $this->authorize($actingUser);
+
+        $type->forceFill(['archived_at' => null, 'is_active' => true])->save();
+
+        $this->audit->record(new AuditEvent(
+            action: 'resources.type.restored',
             category: AuditCategory::Config,
             actor: Actor::staff($actingUser),
             targetType: ResourceType::class,
@@ -130,7 +151,7 @@ final class SaveResourceType
     private function authorize(User $actingUser): void
     {
         if (! $actingUser->hasPermission(Permission::ResourceManage)) {
-            throw new AuthorizationException('You may not manage resources.');
+            throw new AuthorizationException(__('manager_staff.errors.resource_denied'));
         }
     }
 }

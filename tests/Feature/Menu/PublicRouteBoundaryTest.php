@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 use App\Kernel\Tenancy\Http\Middleware\ResolvePublicTenant;
 use App\Kernel\Tenancy\Http\Middleware\ResolveTenant;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route as Router;
 
 /*
@@ -127,12 +131,49 @@ it('resolves the locale on every public-tenant route', function (): void {
 /*
  * Phase 4 asserted the public surface was read-only. Phase 6 added the two
  * writes it said would come — "deliberately, with their own protections, not by
- * accident" (ADR-043). The assertion is not relaxed to match; it is made
- * specific. Anything that is not one of these two still fails, and each of the
- * two must carry the tighter booking throttle, so the exception cannot quietly
- * become a general permission to write from an unauthenticated page.
+ * accident" (ADR-043). Phase 10 added three more the same way: a customer
+ * starting an online payment from their invoice link (the API and the page's
+ * form), and a payment provider's callback (ADR-058, ADR-060). Phase 12 adds
+ * one: a customer leaving the review their capability link opens, once. Phase 13
+ * adds one more of the SAME kind as the payment callback -- a provider posting
+ * a notification that is verified before anything is written (ADR-070).
+ *
+ * The assertion is not relaxed to match; it stays an exact list, and every
+ * entry names the dedicated limiter it must carry. Anything not listed still
+ * fails, so the exceptions cannot quietly become a general permission to write
+ * from an unauthenticated page.
+ *
+ * @return array<string, string> "uri → METHOD" => required limiter
  */
-it('writes only where booking was deliberately allowed', function (): void {
+function publicWriteLimiters(): array
+{
+    return [
+        'api/v1/invoices/{center}/{token}/payments → POST' => 'public-payment',
+        'api/v1/menu/{center}/bookings → POST' => 'public-booking',
+        'api/v1/payments/{center}/gateways/{account}/webhook → POST' => 'payment-webhook',
+        'api/v1/whatsapp/{center}/accounts/{account}/webhook → POST' => 'whatsapp-webhook',
+        // The guest pages now live on the center's own host (the center is
+        // resolved from the host, never from a path segment): the booking
+        // form, the invoice payment and the review form.
+        'booking → POST' => 'public-booking',
+        'i/{token}/pay → POST' => 'public-payment',
+        'r/{token} → POST' => 'public-review',
+    ];
+}
+
+/**
+ * @return list<Limit>
+ */
+function publicLimits(string $limiter, ?Request $request = null): array
+{
+    $callback = RateLimiter::limiter($limiter);
+
+    expect($callback)->not->toBeNull("limiter {$limiter} is not defined");
+
+    return array_values(Arr::wrap($callback($request ?? Request::create('/', 'POST'))));
+}
+
+it('writes only where it was deliberately allowed', function (): void {
     $writable = [];
 
     foreach (publicTenantRoutes() as $route) {
@@ -145,13 +186,10 @@ it('writes only where booking was deliberately allowed', function (): void {
 
     sort($writable);
 
-    expect($writable)->toBe([
-        'api/v1/menu/{center}/bookings → POST',
-        'm/{center}/book → POST',
-    ]);
+    expect($writable)->toBe(array_keys(publicWriteLimiters()));
 });
 
-it('throttles every public write harder than a menu read', function (): void {
+it('throttles every public write with its own limiter, never the menu\'s', function (): void {
     $unprotected = [];
 
     foreach (publicTenantRoutes() as $route) {
@@ -160,15 +198,52 @@ it('throttles every public write harder than a menu read', function (): void {
                 continue;
             }
 
-            // A booking write costs a database transaction and a row somebody
-            // has to deal with. `public-menu` is sized for reading a price
-            // list; it is not a bound on how many appointments a stranger may
-            // create.
-            if (! in_array('throttle:public-booking', $route->gatherMiddleware(), true)) {
+            $required = publicWriteLimiters()[$route->uri().' → '.$method] ?? null;
+            $middleware = $route->gatherMiddleware();
+
+            // A write costs a transaction and a row somebody has to deal with —
+            // or, for a payment, a call to a provider. `public-menu` is sized for
+            // reading a price list; it is not a bound on any of that.
+            if ($required === null
+                || ! in_array('throttle:'.$required, $middleware, true)
+                || in_array('throttle:public-menu', $middleware, true)) {
                 $unprotected[] = $route->uri().' → '.$method;
             }
         }
     }
 
     expect($unprotected)->toBe([]);
+});
+
+it('keeps every write a stranger starts tighter than a menu read', function (): void {
+    $menuPerMinute = min(array_map(static fn (Limit $limit): int => $limit->maxAttempts, publicLimits('public-menu')));
+
+    // A booking, an online payment and a review are all started by a person on
+    // a public page: every window of their limiters is below what reading the
+    // menu gets.
+    foreach (['public-booking', 'public-payment', 'public-review'] as $limiter) {
+        foreach (publicLimits($limiter) as $limit) {
+            if ($limit->decaySeconds <= 60) {
+                expect($limit->maxAttempts)->toBeLessThan($menuPerMinute, "{$limiter} allows {$limit->maxAttempts}/min");
+            }
+        }
+    }
+});
+
+it('bounds provider callbacks per gateway account, so rotating addresses buys nothing', function (): void {
+    /*
+     * A callback is sent by a provider, not a person, and may arrive in bursts.
+     * Its budget is therefore per ACCOUNT — not per IP, which an attacker could
+     * rotate — and every callback is verified before any write (docs/19 §21).
+     */
+    $request = Request::create('/api/v1/payments/center-key/gateways/account-uuid-1/webhook', 'POST');
+    $request->setRouteResolver(fn () => Router::getRoutes()->match($request));
+
+    $limits = publicLimits('payment-webhook', $request);
+
+    expect($limits)->not->toBeEmpty();
+
+    foreach ($limits as $limit) {
+        expect((string) $limit->key)->toContain('account-uuid-1');
+    }
 });

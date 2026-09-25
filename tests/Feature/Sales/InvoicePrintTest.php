@@ -50,6 +50,15 @@ function ipIssue(array $seed, $owner): Invoice
 }
 
 /**
+ * The print page lives on the center's own host under /manager (Phase 15);
+ * the tenant is resolved from that host, the staff member from the session.
+ */
+function ipUrl(array $center, string $path): string
+{
+    return 'http://'.$center['registration']->requested_slug.'.localhost:8000'.$path;
+}
+
+/**
  * @return array<string, mixed>
  */
 function ipSession(array $center, $user): array
@@ -83,7 +92,7 @@ it('shows the invoice digitally to a center with POS but no Printing, and refuse
         ->assertStatus(403);
 
     $this->withSession(ipSession($center, $owner))
-        ->get("/center/sales/invoices/{$invoice->uuid}/print/80mm")
+        ->get(ipUrl($center, "/manager/sales/invoices/{$invoice->uuid}/print/80mm"))
         ->assertStatus(403);
 });
 
@@ -98,7 +107,7 @@ it('prints an 80mm receipt and an A4 page once the center buys Printing', functi
     });
 
     $receipt = $this->withSession(ipSession($center, $owner))
-        ->get("/center/sales/invoices/{$invoice->uuid}/print/80mm")
+        ->get(ipUrl($center, "/manager/sales/invoices/{$invoice->uuid}/print/80mm"))
         ->assertOk()
         ->assertSee('size: 80mm auto', false)
         ->assertSee($invoice->number)
@@ -107,7 +116,7 @@ it('prints an 80mm receipt and an A4 page once the center buys Printing', functi
         ->assertSee('25,000 IQD');
 
     $this->withSession(ipSession($center, $owner))
-        ->get("/center/sales/invoices/{$invoice->uuid}/print/a4")
+        ->get(ipUrl($center, "/manager/sales/invoices/{$invoice->uuid}/print/a4"))
         ->assertOk()
         ->assertSee('size: A4', false)
         ->assertSee($invoice->number);
@@ -117,7 +126,7 @@ it('prints an 80mm receipt and an A4 page once the center buys Printing', functi
         ->and($receipt->getContent())->not->toContain('0750');
 
     $this->withSession(ipSession($center, $owner))
-        ->get("/center/sales/invoices/{$invoice->uuid}/print/pdf")
+        ->get(ipUrl($center, "/manager/sales/invoices/{$invoice->uuid}/print/pdf"))
         ->assertStatus(404);
 });
 
@@ -154,7 +163,7 @@ it('prints right-to-left in Arabic and Kurdish through the same template', funct
 
     foreach (['80mm', 'a4'] as $format) {
         $this->withSession(ipSession($center, $owner))
-            ->get("/center/sales/invoices/{$invoice->uuid}/print/{$format}?locale=ar")
+            ->get(ipUrl($center, "/manager/sales/invoices/{$invoice->uuid}/print/{$format}?locale=ar"))
             ->assertOk()
             ->assertSee('dir="rtl"', false)
             ->assertSee('lang="ar"', false)
@@ -162,7 +171,7 @@ it('prints right-to-left in Arabic and Kurdish through the same template', funct
             ->assertSee('د.ع');
 
         $this->withSession(ipSession($center, $owner))
-            ->get("/center/sales/invoices/{$invoice->uuid}/print/{$format}?locale=ckb")
+            ->get(ipUrl($center, "/manager/sales/invoices/{$invoice->uuid}/print/{$format}?locale=ckb"))
             ->assertOk()
             ->assertSee('dir="rtl"', false)
             ->assertSee('ژمارەی پسوولە');

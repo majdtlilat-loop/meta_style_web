@@ -2,12 +2,19 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Connection;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\CreatesTenantDatabases;
 use Tests\Support\RegistersCenters;
+use Tests\Support\SeedsBenefits;
 use Tests\Support\SeedsBooking;
 use Tests\Support\SeedsCatalog;
+use Tests\Support\SeedsConversations;
+use Tests\Support\SeedsPayments;
 use Tests\Support\SeedsQueue;
 use Tests\Support\SeedsResources;
+use Tests\Support\SeedsReviews;
 use Tests\Support\SeedsSales;
 use Tests\TestCase;
 
@@ -22,14 +29,63 @@ use Tests\TestCase;
 |
 */
 
-uses(TestCase::class, RegistersCenters::class, SeedsCatalog::class, SeedsBooking::class, SeedsResources::class, SeedsQueue::class, SeedsSales::class)->in('Feature');
-uses(TestCase::class, CreatesTenantDatabases::class, RegistersCenters::class, SeedsCatalog::class, SeedsBooking::class, SeedsResources::class, SeedsQueue::class, SeedsSales::class)->in('TenantIsolation');
+uses(TestCase::class, RegistersCenters::class, SeedsCatalog::class, SeedsBooking::class, SeedsResources::class, SeedsQueue::class, SeedsSales::class, SeedsPayments::class, SeedsBenefits::class, SeedsReviews::class, SeedsConversations::class)->in('Feature');
+uses(TestCase::class, CreatesTenantDatabases::class, RegistersCenters::class, SeedsCatalog::class, SeedsBooking::class, SeedsResources::class, SeedsQueue::class, SeedsSales::class, SeedsPayments::class, SeedsBenefits::class, SeedsReviews::class, SeedsConversations::class)->in('TenantIsolation');
 
 /*
 |--------------------------------------------------------------------------
 | Helpers
 |--------------------------------------------------------------------------
 */
+
+/**
+ * A genuinely separate connection to the bound tenant's database — another
+ * desk, another worker — and the call that closes it again.
+ *
+ * For concurrency tests: it takes the row lock a competing request would hold,
+ * so "the Action waited, and wrote nothing while waiting" is observable
+ * (docs/11-TESTING-STRATEGY.md §6).
+ *
+ * @return array{0: Connection, 1: callable(): void}
+ */
+function secondTenantConnection(string $name): array
+{
+    /** @var array<string, mixed> $config */
+    $config = config('database.connections.tenant');
+
+    config(['database.connections.'.$name => $config]);
+
+    $connection = DB::connection($name);
+
+    return [$connection, static function () use ($connection, $name): void {
+        if ($connection->transactionLevel() > 0) {
+            $connection->rollBack();
+        }
+
+        $connection->disconnect();
+        DB::purge($name);
+    }];
+}
+
+/**
+ * Runs `$work` on the tenant connection with a one-second lock wait, and says
+ * whether it gave up waiting for a lock somebody else holds.
+ */
+function waitsForTenantLock(callable $work): bool
+{
+    $tenant = DB::connection('tenant');
+    $tenant->statement('SET SESSION innodb_lock_wait_timeout = 1');
+
+    try {
+        $work();
+
+        return false;
+    } catch (QueryException $e) {
+        return str_contains($e->getMessage(), '1205') || str_contains(strtolower($e->getMessage()), 'lock wait timeout');
+    } finally {
+        $tenant->statement('SET SESSION innodb_lock_wait_timeout = 50');
+    }
+}
 
 /**
  * Reads every PHP file under app/, for the source-scan safeguards in
@@ -65,6 +121,36 @@ function appSourceFiles(): array
     }
 
     return $files;
+}
+
+/**
+ * Every PHP file under app/ with its comments removed by the PHP tokenizer.
+ *
+ * For scans that match across a whole STATEMENT (a builder chain spread over
+ * several lines), where a line-by-line comment skip cannot work: the doc block
+ * explaining a rule must not trip the rule.
+ *
+ * @return array<string, string> repo-relative path => code without comments
+ */
+function appSourceWithoutComments(): array
+{
+    $stripped = [];
+
+    foreach (appSourceFiles() as $path => $contents) {
+        $code = '';
+
+        foreach (token_get_all($contents) as $token) {
+            if (is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            $code .= is_array($token) ? $token[1] : $token;
+        }
+
+        $stripped[$path] = $code;
+    }
+
+    return $stripped;
 }
 
 /**

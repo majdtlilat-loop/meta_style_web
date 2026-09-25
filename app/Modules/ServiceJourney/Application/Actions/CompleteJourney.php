@@ -16,11 +16,13 @@ use App\Modules\Booking\Domain\Data\BookingActor;
 use App\Modules\Booking\Domain\Enums\AppointmentStatus;
 use App\Modules\ServiceJourney\Application\JourneySnapshot;
 use App\Modules\ServiceJourney\Domain\Enums\JourneyStatus;
+use App\Modules\ServiceJourney\Domain\Events\JourneyCompleted;
 use App\Modules\ServiceJourney\Domain\Exceptions\JourneyFailed;
 use App\Modules\ServiceJourney\Domain\Models\ServiceJourney;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 
 /**
  * The customer is done and leaving.
@@ -100,6 +102,10 @@ final class CompleteJourney
                 'status' => JourneyStatus::Completed,
                 'completed_at' => $now,
             ])->save();
+
+            // In the same transaction, so a visit reward commits with the
+            // completion. Listeners key on the journey: a repeat cannot pay twice.
+            Event::dispatch(new JourneyCompleted((int) $journey->getKey(), $journey->branchId()));
         });
 
         $journey->refresh()->load('stages');

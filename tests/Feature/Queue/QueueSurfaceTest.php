@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use App\Kernel\Authorization\Permission;
-use App\Kernel\Tenancy\Infrastructure\StanclTenantResolver;
+use App\Livewire\Center\Queue\WalkInForm;
 use App\Livewire\Center\QueueBoard;
 use App\Modules\Queue\Application\Actions\CallTicket;
 use App\Modules\Queue\Application\Actions\CancelTicket;
@@ -12,7 +12,6 @@ use App\Modules\Queue\Domain\Enums\TicketState;
 use App\Modules\Queue\Domain\Models\QueueTicket;
 use App\Modules\ServiceJourney\Domain\Data\WalkInRequest;
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Livewire\Livewire;
 
@@ -301,10 +300,15 @@ it('renders the reception queue screen', function (): void {
         qapSeed();
     });
 
-    $this->withSession([
-        StanclTenantResolver::SESSION_KEY => $this->publicKeyOf($center['tenant']),
-        Auth::guard('web')->getName() => $owner->getAuthIdentifier(),
-    ])->get('/center/queue')->assertOk()->assertSee('Queue');
+    // On the center's own host since the Manager moved to `{center}.…/manager`;
+    // the old `/center/queue` path no longer exists.
+    $slug = $center['registration']->requested_slug;
+
+    $this->asCenter($center['tenant'], function () use ($owner, $slug): void {
+        $this->actingAs($owner);
+
+        $this->get("http://{$slug}.localhost:8000/manager/queue")->assertOk()->assertSee('Queue');
+    });
 });
 
 it('creates a walk-in and issues a ticket from the screen', function (): void {
@@ -315,14 +319,20 @@ it('creates a walk-in and issues a ticket from the screen', function (): void {
 
         $this->actingAs($this->ownerWithCatalogAccess(), 'web');
 
+        // The board opens the walk-in form; the form (a child component, so a
+        // poll never wipes it) runs CreateWalkInTicket.
         Livewire::test(QueueBoard::class)
             ->set('branch', $seed['branch']->uuid)
             ->call('openWalkIn')
-            ->set('walkInName', 'Sara Ahmed')
-            ->set('walkInServices', [$seed['service']->uuid])
-            ->call('createWalkIn')
+            ->assertDispatched('open-walk-in');
+
+        Livewire::test(WalkInForm::class)
+            ->call('start', $seed['branch']->uuid, 'queue')
+            ->set('name', 'Sara Ahmed')
+            ->set('services', [$seed['service']->uuid])
+            ->call('save')
             ->assertOk()
-            ->assertSet('walkInOpen', false);
+            ->assertSet('open', false);
 
         $ticket = QueueTicket::query()->firstOrFail();
 

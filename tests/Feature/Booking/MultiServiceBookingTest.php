@@ -61,7 +61,7 @@ it('books three services as one visit, running back to back', function (): void 
                 customer: CustomerRef::existing($this->seedCustomer()->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        );
+        )->appointment;
 
         /** @var list<AppointmentItem> $items */
         $items = $appointment->items()->orderBy('position')->get()->all();
@@ -136,7 +136,7 @@ it('assigns any available employee per service, deterministically', function ():
                 customer: CustomerRef::existing($this->seedCustomer()->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        );
+        )->appointment;
 
         $item = $appointment->items()->first();
 
@@ -164,7 +164,7 @@ it('records a named employee as the customer\'s own choice', function (): void {
                 customer: CustomerRef::existing($this->seedCustomer()->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        );
+        )->appointment;
 
         $item = $appointment->items()->first();
 
@@ -189,7 +189,7 @@ it('lets one employee take several services in the same visit', function (): voi
                 customer: CustomerRef::existing($this->seedCustomer()->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        );
+        )->appointment;
 
         $ids = $appointment->items()->orderBy('position')->pluck('employee_id')->all();
 
@@ -219,7 +219,7 @@ it('rejects the whole booking when one service cannot be staffed', function (): 
                 customer: CustomerRef::existing($customer->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        ))->toThrow(BookingFailed::class);
+        )->appointment)->toThrow(BookingFailed::class);
 
         // NOTHING was written. Booking two of the three services a customer
         // asked for and silently dropping the third is worse than saying no,
@@ -253,7 +253,7 @@ it('rolls the whole booking back when a write fails part way through', function 
                 customer: CustomerRef::existing($customer->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        ))->toThrow(QueryException::class);
+        )->appointment)->toThrow(QueryException::class);
 
         expect(Appointment::query()->count())->toBe(0)
             ->and(DB::connection('tenant')->table('appointment_items')->count())->toBe(0);
@@ -276,7 +276,7 @@ it('refuses a start the branch is not open for', function (): void {
                 customer: CustomerRef::existing($customer->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        ))->toThrow(BookingFailed::class, 'not open');
+        )->appointment)->toThrow(BookingFailed::class, 'not open');
     });
 });
 
@@ -296,7 +296,7 @@ it('refuses a visit that would run past closing time', function (): void {
                 customer: CustomerRef::existing($customer->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        ))->toThrow(BookingFailed::class, 'not open');
+        )->appointment)->toThrow(BookingFailed::class, 'not open');
     });
 });
 
@@ -321,7 +321,7 @@ it('books into the small hours of a branch that opened the previous evening', fu
                 customer: CustomerRef::existing($customer->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        );
+        )->appointment;
 
         expect($appointment->localStart()->format('H:i'))->toBe('00:30')
             ->and($appointment->localDate())->toBe(MULTI_DATE);
@@ -336,7 +336,7 @@ it('books into the small hours of a branch that opened the previous evening', fu
                 customer: CustomerRef::existing($customer->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        ))->toThrow(BookingFailed::class, 'not open');
+        )->appointment)->toThrow(BookingFailed::class, 'not open');
     });
 });
 
@@ -357,7 +357,7 @@ it('moves an appointment into the small hours of an overnight branch', function 
                 customer: CustomerRef::existing($customer->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        );
+        )->appointment;
 
         // Rescheduling asks the same question and must get the same answer.
         app(BookingEngine::class)->reschedule(
@@ -389,7 +389,7 @@ it('refuses a booking for an inactive employee even when named directly', functi
                 customer: CustomerRef::existing($customer->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        ))->toThrow(BookingFailed::class, 'not available');
+        )->appointment)->toThrow(BookingFailed::class, 'not available');
     });
 });
 

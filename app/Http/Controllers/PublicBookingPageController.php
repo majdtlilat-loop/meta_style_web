@@ -20,8 +20,10 @@ use App\Modules\Booking\Domain\Data\BookingLine;
 use App\Modules\Booking\Domain\Data\BookingRequest;
 use App\Modules\Booking\Domain\Data\CustomerRef;
 use App\Modules\Booking\Domain\Exceptions\BookingFailed;
+use App\Modules\Booking\Domain\VerificationCode;
 use App\Modules\Branches\Domain\Models\Branch;
 use App\Modules\Catalog\Domain\Models\Service;
+use App\Modules\Menu\Application\PublicPageAppearance;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
@@ -70,6 +72,7 @@ final class PublicBookingPageController extends Controller
         Entitlements $entitlements,
         TenantContext $tenants,
         LanguageRegistry $languages,
+        PublicPageAppearance $pages,
     ): View {
         $this->assertBookable($entitlements);
 
@@ -140,6 +143,10 @@ final class PublicBookingPageController extends Controller
             // it was shown with and replays rather than double-booking.
             'idempotencyKey' => (string) Str::uuid(),
             'confirmation' => session('booking.confirmation'),
+            // The center's booking-page appearance: validated colours, enum
+            // classes and copy already in this language. Presentation only —
+            // nothing in it changes what is offered or what is posted.
+            'appearance' => $pages->booking($locale),
         ]);
     }
 
@@ -185,7 +192,7 @@ final class PublicBookingPageController extends Controller
                 // of the hash. They never reach the stored RESPONSE below.
                 $data,
                 function () use ($data, $engine): JsonResponse {
-                    $appointment = $engine->book(
+                    $booked = $engine->book(
                         new BookingRequest(
                             branchUuid: (string) $data['branch'],
                             lines: [new BookingLine(
@@ -207,8 +214,25 @@ final class PublicBookingPageController extends Controller
                         BookingActor::guest(),
                     );
 
+                    $appointment = $booked->appointment;
+
+                    /*
+                     * The reference and the code go into the REPLAYABLE stored
+                     * response on purpose.
+                     *
+                     * A guest who submits twice — a double tap, a flaky
+                     * connection — gets the same booking back, and has to get
+                     * the same code back with it, or the retry that was
+                     * supposed to be harmless would leave them holding a
+                     * booking whose code they never saw. The idempotency record
+                     * is the one place a raw code is deliberately retained, for
+                     * its 24-hour window, because a guest has no account to
+                     * regenerate from (docs/24-BOOKING-VERIFICATION.md §8).
+                     */
                     return new JsonResponse([
                         'uuid' => $appointment->uuid,
+                        'reference' => $appointment->reference,
+                        'verification_code' => VerificationCode::format((string) $booked->verificationCode),
                         'date' => $appointment->localDate(),
                         'time' => $appointment->localStart()->format('H:i'),
                     ]);

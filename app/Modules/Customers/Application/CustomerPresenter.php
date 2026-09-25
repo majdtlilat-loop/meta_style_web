@@ -88,13 +88,25 @@ final class CustomerPresenter
             'notes' => $this->notes($customer, $viewer),
 
             /*
-             * Deliberately absent: bookings, visits, sales, loyalty, packages,
-             * reviews. Those modules do not exist, and a widget rendering an
-             * empty box promising one is worse than its absence — it makes the
-             * product look broken rather than unbuilt
-             * (docs/13-ROADMAP.md Phase 5 §17).
+             * Deliberately absent: bookings, visits, sales, points, packages,
+             * memberships and reviews. Each belongs to a module ABOVE this one,
+             * and the customer page shows them through that module's own panel
+             * and presenter — Customers never imports them
+             * (docs/04-MODULE-BOUNDARIES.md, docs/21 §3).
              */
         ]);
+    }
+
+    /**
+     * The notes this viewer may read, newest first, each with its author and
+     * whether this viewer may delete it. Omitted (empty) without
+     * `customer.note.view`.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function notesFor(Customer $customer, ?User $viewer): array
+    {
+        return $this->notes($customer, $viewer);
     }
 
     /**
@@ -134,9 +146,12 @@ final class CustomerPresenter
             return [];
         }
 
+        // Authors in ONE query for the whole list, never one per note.
         $notes = $customer->relationLoaded('internalNotes')
-            ? $customer->internalNotes
-            : $customer->internalNotes()->get();
+            ? $customer->internalNotes->loadMissing('author')
+            : $customer->internalNotes()->with('author')->get();
+
+        $mayDelete = $viewer->hasPermission(Permission::CustomerNoteManage);
 
         return $notes
             ->filter(fn (InternalNote $note): bool => $this->canRead($note, $viewer))
@@ -144,6 +159,9 @@ final class CustomerPresenter
                 'uuid' => $note->uuid,
                 'body' => $note->body,
                 'visibility' => $note->visibility->value,
+                // The staff member's display name only — never their contact.
+                'author' => $note->author?->name,
+                'can_delete' => $mayDelete,
                 'created_at' => $note->created_at?->toIso8601String(),
             ])
             ->values()->all();

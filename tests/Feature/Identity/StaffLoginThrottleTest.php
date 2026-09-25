@@ -14,6 +14,7 @@ use Illuminate\Cache\RateLimiter;
 use Illuminate\Cache\Repository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
 
 /*
@@ -61,27 +62,28 @@ function limiterKeys(): array
 
 it('throttles the Livewire staff sign-in, which the route limit never sees', function (): void {
     $center = $this->registerCenter();
-    $key = $this->publicKeyOf($center['tenant']);
+    URL::defaults(['center' => $center['registration']->requested_slug]);
 
-    $component = Livewire::test(Login::class)
-        ->set('centerKey', $key)
-        ->set('identifier', 'owner@alpha.test');
+    $this->asCenter($center['tenant'], function (): void {
+        $component = Livewire::test(Login::class)
+            ->set('identifier', 'owner@alpha.test');
 
-    // Five wrong passwords are refused as credentials…
-    for ($attempt = 0; $attempt < 5; $attempt++) {
+        // Five wrong passwords are refused as credentials…
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $component->set('password', 'wrong-password')
+                ->call('submit')
+                ->assertHasErrors('identifier')
+                ->assertSee('do not match our records');
+        }
+
+        // …and the sixth is refused as a rate limit, distinctly. Somebody being
+        // told to wait needs to know that, or they keep trying and keep extending
+        // the block.
         $component->set('password', 'wrong-password')
             ->call('submit')
             ->assertHasErrors('identifier')
-            ->assertSee('do not match our records');
-    }
-
-    // …and the sixth is refused as a rate limit, distinctly. Somebody being
-    // told to wait needs to know that, or they keep trying and keep extending
-    // the block.
-    $component->set('password', 'wrong-password')
-        ->call('submit')
-        ->assertHasErrors('identifier')
-        ->assertSee('Too many attempts');
+            ->assertSee('Too many attempts');
+    });
 });
 
 it('makes even the correct password wait while the bucket is hot', function (): void {
@@ -227,14 +229,16 @@ it('trips at the same attempt whether or not the account exists', function (): v
 it('shares one throttle between the Livewire form and the API token endpoint', function (): void {
     $center = $this->registerCenter();
     $key = $this->publicKeyOf($center['tenant']);
+    URL::defaults(['center' => $center['registration']->requested_slug]);
 
-    $component = Livewire::test(Login::class)
-        ->set('centerKey', $key)
-        ->set('identifier', 'owner@alpha.test');
+    $this->asCenter($center['tenant'], function (): void {
+        $component = Livewire::test(Login::class)
+            ->set('identifier', 'owner@alpha.test');
 
-    for ($attempt = 0; $attempt < 5; $attempt++) {
-        $component->set('password', 'wrong-password')->call('submit')->assertHasErrors('identifier');
-    }
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $component->set('password', 'wrong-password')->call('submit')->assertHasErrors('identifier');
+        }
+    });
 
     // ONE request, so the route's own `throttle:login` (5/min per address) has
     // not been reached — a 429 here can only have come from the central
@@ -318,50 +322,37 @@ it('keeps the raw identifier out of the rate-limiter keyspace', function (): voi
     });
 });
 
-it('counts an unknown center key too, so the limit does not announce a real one', function (): void {
+it('rejects an unknown center host before the staff login form can initialize', function (): void {
     $center = $this->registerCenter();
 
-    // Rate limiting the credential check made "too many attempts" the sixth
-    // answer for a REAL center. Without counting these, a sixth "credentials do
-    // not match" would confirm the key names no center — an oracle this form
-    // did not have before the throttle was added.
-    $component = Livewire::test(Login::class)
-        ->set('centerKey', 'not-a-real-center-key')
-        ->set('identifier', 'owner@alpha.test');
+    // Browser authentication is subdomain-authoritative. An unregistered host
+    // fails closed before rendering a form and therefore cannot become a
+    // tenant-discovery oracle through a client-submitted center key.
+    $this->get('http://not-a-real-center.localhost:8000/login')->assertNotFound();
 
-    for ($attempt = 0; $attempt < 5; $attempt++) {
-        $component->set('password', 'wrong-password')
-            ->call('submit')
-            ->assertSee('do not match our records');
-    }
-
-    $component->set('password', 'wrong-password')
-        ->call('submit')
-        ->assertSee('Too many attempts');
-
-    // And it consumed nobody's allowance: the tenant-less scope is shared by no
-    // center, so a real one still has its full five.
+    // The failed host resolution consumed nobody's allowance; a registered
+    // center still authenticates through its isolated tenant context.
     $this->asCenter($center['tenant'], function (): void {
         expect(app(AuthenticateStaff::class)('owner@alpha.test', STAFF_PASSWORD))
             ->toBeInstanceOf(User::class);
     });
 });
 
-it('carries the unknown-center count onto the API token endpoint', function (): void {
+it('rate limits repeated unknown center keys on the public API token endpoint', function (): void {
     $this->registerCenter();
 
-    // Five through the form, against a center key that names nothing.
-    $component = Livewire::test(Login::class)
-        ->set('centerKey', 'not-a-real-center-key')
-        ->set('identifier', 'owner@alpha.test');
-
+    // The public API intentionally accepts a center key for non-browser
+    // clients. Unknown keys receive the same bounded credential response and
+    // never acquire a separate unbounded path.
     for ($attempt = 0; $attempt < 5; $attempt++) {
-        $component->set('password', 'wrong-password')->call('submit')->assertHasErrors('identifier');
+        $this->postJson('/api/v1/public/auth/token', [
+            'center_key' => 'not-a-real-center-key',
+            'identifier' => 'owner@alpha.test',
+            'password' => 'wrong-password',
+        ])->assertUnauthorized();
     }
 
-    // ONE request here, so the endpoint's own `throttle:login` (5/min per
-    // address) has not been reached. Switching channels must not buy a fresh
-    // allowance — the same bucket has to answer.
+    // The sixth attempt is bounded, regardless of whether the center exists.
     $this->postJson('/api/v1/public/auth/token', [
         'center_key' => 'not-a-real-center-key',
         'identifier' => 'owner@alpha.test',

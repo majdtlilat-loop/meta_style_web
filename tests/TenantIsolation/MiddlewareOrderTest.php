@@ -6,13 +6,14 @@ use App\Kernel\Http\MiddlewareOrderGuard;
 use App\Kernel\Http\MiddlewareOrderViolation;
 use App\Kernel\Identity\TenantApiToken;
 use App\Kernel\Tenancy\Contracts\TenantContext;
+use App\Kernel\Tenancy\Http\Middleware\ResolveLivewireTenant;
 use App\Kernel\Tenancy\Http\Middleware\ResolveTenant;
 use App\Kernel\Tenancy\Infrastructure\StanclTenantResolver;
-use App\Kernel\Tenancy\Infrastructure\TenantModel;
 use Illuminate\Auth\Events\Authenticated;
 use Illuminate\Auth\Middleware\Authenticate;
 use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Routing\Middleware\ThrottleRequests;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Event;
@@ -170,16 +171,13 @@ it('rejects a token whose host names a different center, before authenticating',
     $alpha = $this->registerCenter('Alpha', 'owner@alpha.test');
     $beta = $this->registerCenter('Beta', 'owner@beta.test');
 
-    TenantModel::query()->findOrFail($beta['tenant']->id)
-        ->domains()->create(['domain' => 'beta.order.test', 'is_primary' => true]);
-
     $authenticated = false;
     Event::listen(Authenticated::class, function () use (&$authenticated): void {
         $authenticated = true;
     });
 
     $this->withHeaders($this->tokenHeaders($this->apiTokenFor($alpha['tenant'])))
-        ->getJson('http://beta.order.test/api/v1/tenant/me')
+        ->getJson('http://beta.localhost:8000/api/v1/tenant/me')
         ->assertForbidden()
         ->assertJsonPath('error.code', 'TENANT.RESOLUTION_CONFLICT');
 
@@ -216,7 +214,7 @@ it('has the session\'s center bound when the web guard loads the user', function
         $this->withSession([
             StanclTenantResolver::SESSION_KEY => $this->publicKeyOf($alpha['tenant']),
             Auth::guard('web')->getName() => $owner->getAuthIdentifier(),
-        ])->get('/center')->assertOk();
+        ])->get('http://alpha.localhost:8000/manager')->assertOk();
     });
 
     expect($seen)->not->toBeNull()
@@ -230,15 +228,12 @@ it('rejects a web session whose center disagrees with the host', function (): vo
     $alpha = $this->registerCenter('Alpha', 'owner@alpha.test');
     $beta = $this->registerCenter('Beta', 'owner@beta.test');
 
-    TenantModel::query()->findOrFail($beta['tenant']->id)
-        ->domains()->create(['domain' => 'beta.session.test', 'is_primary' => true]);
-
     // A session that says Alpha arriving on Beta's host: a stale session, a
     // swapped cookie, or someone trying it on (ADR-030). Refused on the web
     // surface with a 403 page, not a 500 — the conflict is a decision, not a
     // crash.
     $this->withSession([StanclTenantResolver::SESSION_KEY => $this->publicKeyOf($alpha['tenant'])])
-        ->get('http://beta.session.test/center')
+        ->get('http://beta.localhost:8000/manager')
         ->assertForbidden();
 
     expect(app(TenantContext::class)->isBound())->toBeFalse();
@@ -246,7 +241,7 @@ it('rejects a web session whose center disagrees with the host', function (): vo
 
 it('answers an unknown host with a plain not found on the web surface too', function (): void {
     // Enumerating which centers exist must not be possible by trying hostnames.
-    $this->get('http://nobody.metastyle.test/center')->assertNotFound();
+    $this->get('http://nobody.localhost:8000/manager')->assertNotFound();
 });
 
 /*
@@ -294,6 +289,39 @@ it('refuses to boot a pipeline that does not prioritise tenant resolution at all
     // ResolveTenant fell to the unprioritised tail of the list.
     expect(fn () => app(MiddlewareOrderGuard::class)->assert($router))
         ->toThrow(MiddlewareOrderViolation::class, 'absent from the middleware priority list');
+});
+
+it('resolves the center before the throttle on Livewire\'s upload endpoint', function (): void {
+    $router = app(Router::class);
+
+    // The resolved, sorted pipeline — what actually runs, not what the group says.
+    $pipeline = array_map(
+        static fn (mixed $middleware): string => is_string($middleware) ? $middleware : get_debug_type($middleware),
+        $router->gatherRouteMiddleware($router->getRoutes()->getByName('livewire.upload-file')),
+    );
+
+    $resolver = array_search(ResolveLivewireTenant::class, $pipeline, true);
+    $throttle = collect($pipeline)->search(static fn (string $middleware): bool => str_starts_with($middleware, ThrottleRequests::class));
+
+    expect($resolver)->not->toBeFalse()
+        ->and($throttle)->not->toBeFalse()
+        ->and($resolver)->toBeLessThan($throttle);
+});
+
+it('refuses to boot a pipeline whose Livewire resolver is not prioritised', function (): void {
+    $router = new Router(app('events'), app());
+    $router->middlewarePriority = [ResolveTenant::class, AuthenticatesRequests::class, ThrottleRequests::class];
+
+    expect(fn () => app(MiddlewareOrderGuard::class)->assert($router))
+        ->toThrow(MiddlewareOrderViolation::class, ResolveLivewireTenant::class.' is absent');
+});
+
+it('refuses to boot a pipeline that throttles before the Livewire resolver', function (): void {
+    $router = new Router(app('events'), app());
+    $router->middlewarePriority = [ResolveTenant::class, ThrottleRequests::class, ResolveLivewireTenant::class, AuthenticatesRequests::class];
+
+    expect(fn () => app(MiddlewareOrderGuard::class)->assert($router))
+        ->toThrow(MiddlewareOrderViolation::class, 'reads the signed-in user');
 });
 
 it('refuses to boot when the anchor it sorts against has gone', function (): void {

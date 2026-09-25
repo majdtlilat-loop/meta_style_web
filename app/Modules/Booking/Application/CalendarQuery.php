@@ -6,17 +6,23 @@ namespace App\Modules\Booking\Application;
 
 use App\Kernel\Authorization\AppointmentScope;
 use App\Kernel\Authorization\Permission;
+use App\Kernel\Contact\PhoneNumber;
 use App\Kernel\Identity\Models\User;
 use App\Kernel\Time\BranchClock;
+use App\Modules\Booking\Domain\BookingReference;
 use App\Modules\Booking\Domain\BookingSettings;
 use App\Modules\Booking\Domain\Enums\AppointmentStatus;
+use App\Modules\Booking\Domain\Enums\BookingSource;
 use App\Modules\Booking\Domain\Exceptions\BookingFailed;
 use App\Modules\Booking\Domain\Models\Appointment;
 use App\Modules\Branches\Domain\Models\Branch;
 use App\Modules\Employees\Domain\Enums\EmployeeStatus;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Pagination\LengthAwarePaginator as Paginator;
 use Illuminate\Support\Collection;
 
 /**
@@ -56,6 +62,14 @@ use Illuminate\Support\Collection;
  * every appointment's services and stylist, and without this it is 1 + 3n
  * queries — which is invisible in a test with three appointments and fatal in a
  * salon with three hundred. A query-count test holds it (§42).
+ *
+ * ## Filters narrow, never widen
+ *
+ * branch · employee · service · customer (uuid) · source · status · search
+ * (an exact reference, or a customer — by phone only for a viewer who may see
+ * phones, ADR-042). Every one is ANDed onto the scoped query.
+ *
+ * @phpstan-type CalendarFilters array{branch?: string|null, employee?: string|null, status?: string|null, service?: string|null, customer?: string|null, source?: string|null, search?: string|null, with_resources?: bool}
  */
 final class CalendarQuery
 {
@@ -67,13 +81,171 @@ final class CalendarQuery
     /**
      * Appointments a viewer may see, in a branch-local date range.
      *
-     * @param  array{branch?: string|null, employee?: string|null, status?: string|null, assigned_inactive?: bool}  $filters
+     * @param  CalendarFilters  $filters
      * @return Collection<int, Appointment>
      *
      * @throws BookingFailed
      * @throws AuthorizationException
      */
     public function forRange(string $from, string $to, User $viewer, array $filters = []): Collection
+    {
+        $query = $this->rangeQuery($from, $to, $viewer, $filters);
+
+        if ($query === null) {
+            return new Collection;
+        }
+
+        $this->applyStatus($query, $filters['status'] ?? null);
+
+        /** @var Collection<int, Appointment> $appointments */
+        $appointments = $query->with($this->relations($filters))
+            ->orderBy('starts_at')
+            ->orderBy('id')
+            ->get();
+
+        return $appointments;
+    }
+
+    /**
+     * The same question, a page at a time — the list view.
+     *
+     * Still bounded by the range cap: paging makes a long list cheap to render,
+     * it does not make "every appointment ever" a reasonable query (§22).
+     *
+     * @param  CalendarFilters  $filters
+     * @return LengthAwarePaginator<int, Appointment>
+     *
+     * @throws BookingFailed
+     * @throws AuthorizationException
+     */
+    public function paginate(string $from, string $to, User $viewer, array $filters = [], int $perPage = 25): LengthAwarePaginator
+    {
+        $perPage = max(1, min($perPage, 100));
+
+        $query = $this->rangeQuery($from, $to, $viewer, $filters);
+
+        if ($query === null) {
+            return new Paginator([], 0, $perPage);
+        }
+
+        $this->applyStatus($query, $filters['status'] ?? null);
+
+        /** @var LengthAwarePaginator<int, Appointment> $page */
+        $page = $query->with($this->relations($filters))
+            ->orderBy('starts_at')
+            ->orderBy('id')
+            ->paginate($perPage);
+
+        return $page;
+    }
+
+    /**
+     * How many appointments of each status the range holds, under every filter
+     * EXCEPT the status one — so the status switch can show what each choice
+     * would give. One grouped query.
+     *
+     * @param  CalendarFilters  $filters
+     * @return array<string, int> status => count, every status present
+     *
+     * @throws BookingFailed
+     * @throws AuthorizationException
+     */
+    public function statusCounts(string $from, string $to, User $viewer, array $filters = []): array
+    {
+        $counts = array_fill_keys(AppointmentStatus::values(), 0);
+
+        $query = $this->rangeQuery($from, $to, $viewer, $filters);
+
+        if ($query === null) {
+            return $counts;
+        }
+
+        $rows = $query->toBase()
+            ->select('status')
+            ->selectRaw('count(*) as aggregate')
+            ->groupBy('status')
+            ->get();
+
+        foreach ($rows as $row) {
+            /** @var object{status: string, aggregate: int|string} $row */
+            if (array_key_exists($row->status, $counts)) {
+                $counts[$row->status] = (int) $row->aggregate;
+            }
+        }
+
+        return $counts;
+    }
+
+    /**
+     * One appointment, if — and only if — this viewer may see it.
+     *
+     * THE scoped finder. The same three questions the calendar asks in its
+     * WHERE clause: may they view appointments at all, is it in a branch they
+     * may see, and — for `appointment.view_own` — is it their own work. Any
+     * "no" is NOT FOUND rather than forbidden: a surface that answers 403 for a
+     * real uuid has confirmed that it exists (docs/08-AUDIT-SECURITY.md §19).
+     *
+     * Loads exactly what {@see AppointmentPresenter::detail()} renders, so a
+     * caller never lazy-loads one relation per section.
+     *
+     * @throws ModelNotFoundException<Appointment>
+     */
+    public function find(string $uuid, User $viewer): Appointment
+    {
+        $scope = $this->scopes->forViewer($viewer);
+
+        $appointment = null;
+
+        if (! $scope->isDenied() && $uuid !== '') {
+            $query = Appointment::query()
+                ->where('uuid', $uuid)
+                ->with([
+                    'customer.account',
+                    'customer.tags',
+                    'branch',
+                    'items.employee',
+                    'items.addons',
+                    'items.resourceReservations.resource',
+                    'internalNotes.author',
+                ]);
+
+            $viewer->branchScope()->applyTo($query, 'branch_id');
+            $this->applyScope($query, $scope);
+
+            $appointment = $query->first();
+        }
+
+        if (! $appointment instanceof Appointment) {
+            throw (new ModelNotFoundException)->setModel(Appointment::class, [$uuid]);
+        }
+
+        return $appointment;
+    }
+
+    /**
+     * Has this center ever taken a booking?
+     *
+     * The downgrade rule's question: a center that no longer owns `booking`
+     * keeps reading the history it has, and one that never had any sees the
+     * upgrade page instead of an empty calendar (docs/15-BOOKING.md §14).
+     */
+    public function hasHistory(): bool
+    {
+        return Appointment::query()->exists();
+    }
+
+    /**
+     * The base query every calendar read shares: permission, range cap, branch
+     * scope, own scope, window and every filter but status. Null when the
+     * viewer may see no branch at all.
+     *
+     * @param  CalendarFilters  $filters
+     * @return Builder<Appointment>|null
+     *
+     * @throws BookingFailed
+     * @throws AuthorizationException
+     */
+    private function rangeQuery(string $from, string $to, User $viewer, array $filters): ?Builder
     {
         $scope = $this->scopes->forViewer($viewer);
 
@@ -86,34 +258,40 @@ final class CalendarQuery
         $branches = $this->branchesInScope($viewer, $filters['branch'] ?? null);
 
         if ($branches->isEmpty()) {
-            return new Collection;
+            return null;
         }
 
-        $query = Appointment::query()
-            ->with([
-                // `customer.account` and `customer.tags` because
-                // CustomerPresenter reads both for every row it renders:
-                // `isRegistered()` asks the account relation, and the summary
-                // lists tags. Without them a week view is one extra pair of
-                // queries per appointment — invisible with three bookings in a
-                // test and fatal in a salon with three hundred (§42).
-                'customer.account',
-                'customer.tags',
-                'items.employee',
-                'items.addons',
-            ])
-            ->whereIn('branch_id', $branches->pluck('id')->all())
-            ->orderBy('starts_at')
-            ->orderBy('id');
+        $query = Appointment::query()->whereIn('branch_id', $branches->pluck('id')->all());
 
         $this->applyWindow($query, $branches, $from, $to);
         $this->applyScope($query, $scope);
-        $this->applyFilters($query, $filters);
+        $this->applyFilters($query, $filters, $viewer);
 
-        /** @var Collection<int, Appointment> $appointments */
-        $appointments = $query->get();
+        return $query;
+    }
 
-        return $appointments;
+    /**
+     * What every row renders.
+     *
+     * `customer.account` and `customer.tags` because CustomerPresenter reads
+     * both for every row: `isRegistered()` asks the account relation, and the
+     * summary lists tags. Without them a week view is one extra pair of
+     * queries per appointment — invisible with three bookings in a test and
+     * fatal in a salon with three hundred (§42). Reservations only when the
+     * caller draws rooms.
+     *
+     * @param  CalendarFilters  $filters
+     * @return list<string>
+     */
+    private function relations(array $filters): array
+    {
+        $relations = ['customer.account', 'customer.tags', 'branch', 'items.employee', 'items.addons'];
+
+        if (($filters['with_resources'] ?? false) === true) {
+            $relations[] = 'items.resourceReservations.resource';
+        }
+
+        return $relations;
     }
 
     /**
@@ -147,7 +325,9 @@ final class CalendarQuery
 
         /** @var Collection<int, Appointment> $appointments */
         $appointments = Appointment::query()
-            ->with(['customer', 'items.employee'])
+            // Everything the presenter renders per row, for the same reason
+            // as forRange(): the list is drawn with AppointmentPresenter.
+            ->with(['customer.account', 'customer.tags', 'branch', 'items.employee', 'items.addons'])
             ->whereIn('branch_id', $branches->pluck('id')->all())
             ->blocking()
             ->where('starts_at', '>=', $now->utc())
@@ -257,25 +437,34 @@ final class CalendarQuery
 
     /**
      * @param  Builder<Appointment>  $query
-     * @param  array{branch?: string|null, employee?: string|null, status?: string|null, assigned_inactive?: bool}  $filters
      */
-    private function applyFilters(Builder $query, array $filters): void
+    private function applyStatus(Builder $query, ?string $status): void
     {
-        $status = $filters['status'] ?? null;
-
-        if (is_string($status) && $status !== '') {
-            // Validated against the enum, never used as a raw string: an
-            // arbitrary status filter would be a where clause the client wrote.
-            // An unknown one matches NOTHING rather than everything — the
-            // honest answer, and it cannot widen what the caller sees.
-            $parsed = AppointmentStatus::tryFrom($status);
-
-            $query->where(
-                'status',
-                $parsed instanceof AppointmentStatus ? $parsed->value : '__unknown__',
-            );
+        if (! is_string($status) || $status === '') {
+            return;
         }
 
+        // Validated against the enum, never used as a raw string: an arbitrary
+        // status filter would be a where clause the client wrote. An unknown
+        // one matches NOTHING rather than everything — the honest answer, and
+        // it cannot widen what the caller sees.
+        $parsed = AppointmentStatus::tryFrom($status);
+
+        $query->where(
+            'status',
+            $parsed instanceof AppointmentStatus ? $parsed->value : '__unknown__',
+        );
+    }
+
+    /**
+     * Every filter but status. Each NARROWS what the scope already allows; no
+     * filter can widen it, because they are all ANDed onto the scoped query.
+     *
+     * @param  Builder<Appointment>  $query
+     * @param  CalendarFilters  $filters
+     */
+    private function applyFilters(Builder $query, array $filters, User $viewer): void
+    {
         $employee = $filters['employee'] ?? null;
 
         if (is_string($employee) && $employee !== '') {
@@ -284,6 +473,92 @@ final class CalendarQuery
                 fn (Builder $e) => $e->where('uuid', $employee)
             ));
         }
+
+        $service = $filters['service'] ?? null;
+
+        if (is_string($service) && $service !== '') {
+            // By the catalog link, not the snapshot name: a renamed service is
+            // still the same service in a report and in a filter (§3).
+            $query->whereHas('items', fn (Builder $items) => $items->whereHas(
+                'service',
+                fn (Builder $s) => $s->where('uuid', $service)
+            ));
+        }
+
+        $customer = $filters['customer'] ?? null;
+
+        if (is_string($customer) && $customer !== '') {
+            $query->whereHas('customer', fn (Builder $c) => $c->where('uuid', $customer));
+        }
+
+        $source = $filters['source'] ?? null;
+
+        if (is_string($source) && $source !== '') {
+            $parsed = BookingSource::tryFrom($source);
+
+            $query->where('source', $parsed instanceof BookingSource ? $parsed->value : '__unknown__');
+        }
+
+        $this->applySearch($query, $filters['search'] ?? null, $viewer);
+    }
+
+    /**
+     * The desk's search box: a booking reference, or a customer.
+     *
+     * A reference is matched EXACTLY — it is public and enumerable, and a
+     * prefix search over it would be a way to page through the book (ADR-068).
+     * A customer is matched by name, and by phone only for a viewer who may
+     * see phone numbers: a masked field is never a filter, or the search box
+     * becomes the way to unmask it (ADR-042). The same rule the CRM applies.
+     *
+     * @param  Builder<Appointment>  $query
+     */
+    private function applySearch(Builder $query, ?string $search, User $viewer): void
+    {
+        $search = is_string($search) ? trim($search) : '';
+
+        if ($search === '') {
+            return;
+        }
+
+        $search = mb_substr($search, 0, 80);
+        $reference = BookingReference::normalise($search);
+
+        // "B-412", "b 412" or a short number is a reference; a long number is a
+        // phone. Without the length rule every phone number would normalise
+        // into a well-formed reference and never reach the customer search.
+        $looksLikeReference = str_starts_with(mb_strtoupper($search), 'B')
+            || preg_match('/^\s*#?\d{1,6}\s*$/', $search) === 1;
+
+        if ($looksLikeReference && BookingReference::isWellFormed($reference)) {
+            $query->where('reference', $reference);
+
+            return;
+        }
+
+        $mayMatchContact = $viewer->hasPermission(Permission::CustomerContactView);
+
+        $query->whereHas('customer', function (Builder $customers) use ($search, $mayMatchContact): void {
+            $customers->where(function (Builder $q) use ($search, $mayMatchContact): void {
+                $q->where('name', 'like', '%'.addcslashes($search, '%_\\').'%');
+
+                if (! $mayMatchContact) {
+                    return;
+                }
+
+                $phone = PhoneNumber::parse($search);
+
+                if ($phone !== null) {
+                    $q->orWhere('phone', $phone->e164);
+                }
+
+                $digits = preg_replace('/\D+/', '', $search) ?? '';
+
+                if (mb_strlen($digits) >= 4) {
+                    $q->orWhere('phone', 'like', '%'.$digits);
+                }
+            });
+        });
     }
 
     /**

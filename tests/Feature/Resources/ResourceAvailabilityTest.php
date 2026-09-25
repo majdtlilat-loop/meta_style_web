@@ -50,7 +50,7 @@ function bookAt(array $seed, string $time, ?string $phone = null, array $resourc
             customer: CustomerRef::details('Sara', $phone ?? '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 /**

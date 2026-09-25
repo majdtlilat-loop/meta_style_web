@@ -39,12 +39,20 @@
         .grand { font-size: 12pt; font-weight: 700; }
         .void-banner { border: 2px solid #000; text-align: center; padding: 1mm; margin-block-end: 2mm; font-size: 11pt; }
         .thanks { text-align: center; margin-block-start: 3mm; }
+        body[data-text-size="large"] { font-size: 10.5pt; }
+        body[data-text-size="large"] .center, body[data-text-size="large"] .grand { font-size: 13.5pt; }
 
         @media print { .no-print { display: none; } }
     </style>
+    @include('printing.styles')
 </head>
-<body>
+<body data-text-size="{{ $print['text_size'] }}">
+    {{-- The center's print appearance frames the invoice: its header and
+         footer replace the body's own; the lines and totals are the
+         immutable view model, untouched. --}}
+    @include('printing.header', ['print' => $print, 'doc' => $invoice])
     @include('sales.partials.invoice-body', ['invoice' => $invoice])
+    @include('printing.footer', ['print' => $print])
 
     <p class="no-print" style="text-align:center">
         <button type="button" onclick="window.print()">{{ __('invoice_public.print') }}</button>

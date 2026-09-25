@@ -46,6 +46,7 @@ function issueRegistration(string $centerName = 'Capability Center', string $ema
         'center_name' => $centerName,
         'owner_name' => 'Owner',
         'owner_email' => $email,
+        'owner_phone' => '+9647701234567',
         'password' => CAPABILITY_PLAINTEXT,
         'locale' => 'en',
         'country' => 'IQ',
@@ -136,7 +137,7 @@ it('accepts the correct token', function (): void {
         ->getJson("/api/v1/public/registrations/{$issued['registration']->uuid}")
         ->assertOk()
         ->assertJsonPath('data.uuid', $issued['registration']->uuid)
-        ->assertJsonPath('data.status', 'preparing');
+        ->assertJsonPath('data.status', 'pending_verification');
 });
 
 it('retries with the correct token', function (): void {
@@ -239,8 +240,10 @@ it('never serialises the token hash', function (): void {
 it('does not reissue a capability for a repeated submission', function (): void {
     $payload = [
         'center_name' => 'Repeat Center',
+        'center_slug' => 'repeat-center',
         'owner_name' => 'Owner',
         'owner_email' => 'owner@repeat.test',
+        'owner_phone' => '+9647701234567',
         'password' => CAPABILITY_PLAINTEXT,
     ];
 

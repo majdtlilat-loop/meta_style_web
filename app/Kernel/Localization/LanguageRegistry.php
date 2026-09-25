@@ -46,6 +46,20 @@ final class LanguageRegistry
         return is_string($name) ? $name : $locale;
     }
 
+    public function shortLabel(string $locale): string
+    {
+        $label = $this->config->get("localization.languages.{$locale}.short_label");
+
+        return is_string($label) ? $label : mb_strtoupper($locale);
+    }
+
+    public function icon(string $locale): string
+    {
+        $icon = $this->config->get("localization.languages.{$locale}.icon");
+
+        return is_string($icon) ? $icon : 'language';
+    }
+
     /**
      * @return list<string>
      */

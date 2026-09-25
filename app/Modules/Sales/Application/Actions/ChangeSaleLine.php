@@ -7,11 +7,14 @@ namespace App\Modules\Sales\Application\Actions;
 use App\Kernel\Audit\Enums\AuditSeverity;
 use App\Kernel\Authorization\Permission;
 use App\Kernel\Identity\Models\User;
+use App\Modules\Sales\Application\LineEmployees;
 use App\Modules\Sales\Application\SaleLines;
 use App\Modules\Sales\Application\SalesAccess;
 use App\Modules\Sales\Application\SalesAudit;
+use App\Modules\Sales\Domain\Enums\SaleItemKind;
 use App\Modules\Sales\Domain\Exceptions\SaleFailed;
 use App\Modules\Sales\Domain\Models\Sale;
+use App\Modules\Sales\Domain\Models\SaleAdjustment;
 use App\Modules\Sales\Domain\Models\SaleItem;
 use App\Modules\Sales\Domain\Pricing\SalePricing;
 use App\Modules\Sales\Domain\SaleMutation;
@@ -32,10 +35,11 @@ final class ChangeSaleLine
         private readonly SaleLines $lines,
         private readonly SaleMutation $mutation,
         private readonly SalesAudit $audit,
+        private readonly LineEmployees $employees,
     ) {}
 
     /**
-     * @param  array{quantity?: int|null, note?: string|null}  $input
+     * @param  array{quantity?: int|null, note?: string|null, employee?: string|null}  $input
      *
      * @throws SaleFailed
      * @throws AuthorizationException
@@ -48,7 +52,7 @@ final class ChangeSaleLine
 
         [, $item] = $this->mutation->apply($sale, function (Sale $locked) use ($itemUuid, $input, &$before): SaleItem {
             $item = $this->item($locked, $itemUuid);
-            $before = ['quantity' => $item->quantity];
+            $before = ['quantity' => $item->quantity, 'employee_id' => $item->employee_id];
 
             if (array_key_exists('quantity', $input) && $input['quantity'] !== null) {
                 $quantity = (int) $input['quantity'];
@@ -61,11 +65,21 @@ final class ChangeSaleLine
                     throw SaleFailed::policy('A performed service is charged once.');
                 }
 
+                if ($item->kind === SaleItemKind::Offering && $quantity !== 1) {
+                    // One membership or package per line, so each activates as
+                    // exactly one thing for exactly one customer.
+                    throw SaleFailed::policy('Sell one of these per line.');
+                }
+
                 $item->quantity = $quantity;
             }
 
             if (array_key_exists('note', $input)) {
                 $item->note = $this->lines->note($input['note']);
+            }
+
+            if (array_key_exists('employee', $input)) {
+                $item->employee_id = $this->employee($locked, $item, $input['employee']);
             }
 
             $item->save();
@@ -74,11 +88,29 @@ final class ChangeSaleLine
         });
 
         $this->audit->record('sale.line_updated', $actingUser, $sale,
-            after: ['line' => $item->uuid, 'quantity' => $item->quantity],
+            after: ['line' => $item->uuid, 'quantity' => $item->quantity, 'employee_id' => $item->employee_id],
             before: $before,
         );
 
         return $item->refresh();
+    }
+
+    /**
+     * Who performed a service line rung up at the till: an eligible employee
+     * at this branch, or nobody. A visit line keeps the performer its stage
+     * recorded — that is what happened, and the till does not rewrite it.
+     *
+     * @throws SaleFailed
+     */
+    private function employee(Sale $locked, SaleItem $item, mixed $employeeUuid): ?int
+    {
+        if ($item->kind !== SaleItemKind::Service || $item->journey_stage_id !== null) {
+            throw SaleFailed::policy('Only a service line rung up at the till records who performed it here.');
+        }
+
+        $employeeUuid = is_string($employeeUuid) ? trim($employeeUuid) : '';
+
+        return $employeeUuid === '' ? null : $this->employees->resolve($locked, $item->service_id, $employeeUuid);
     }
 
     /**
@@ -189,6 +221,13 @@ final class ChangeSaleLine
         return $item->refresh();
     }
 
+    /**
+     * The line, LOCKED with its sale — and refused if a customer benefit rests
+     * on it. A benefit was valued against this line as it stood: changing the
+     * quantity or price underneath it, or removing it, would leave points spent
+     * or a package session used for a line that no longer matches. Withdraw the
+     * benefit first (docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md §22).
+     */
     private function item(Sale $locked, string $itemUuid): SaleItem
     {
         /** @var SaleItem|null $item */
@@ -199,6 +238,10 @@ final class ChangeSaleLine
 
         if (! $item instanceof SaleItem) {
             throw SaleFailed::policy('That line is not on this sale.');
+        }
+
+        if (SaleAdjustment::query()->where('sale_item_id', $item->getKey())->exists()) {
+            throw SaleFailed::policy('A customer benefit is applied to that line. Withdraw it before changing the line.');
         }
 
         return $item;

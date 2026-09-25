@@ -6,6 +6,7 @@ use App\Kernel\Audit\Models\TenantAuditLog;
 use App\Kernel\Authorization\Permission;
 use App\Kernel\Notes\NoteVisibility;
 use App\Kernel\Privacy\ContactMasker;
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Livewire\Center\Customers as CustomersPage;
 use App\Modules\Customers\Application\Actions\ManageCustomerNotes;
 use App\Modules\Customers\Application\CustomerPresenter;
@@ -333,7 +334,9 @@ it('never leaks a customer note to the public menu', function (): void {
         app(ManageCustomerNotes::class)->add($customer, 'Never quote below 15,000.', $owner);
     });
 
-    $body = (string) $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))
+    // Since Phase 15 the public menu answers on the center's own host, with its slug in the path.
+    $slug = $center['registration']->requested_slug;
+    $body = (string) $this->getJson(app(PlatformHosts::class)->centerUrl($slug, '/api/v1/menu/'.$slug))
         ->assertOk()->getContent();
 
     // The public surface builds from an allow-list, so a customer note has no

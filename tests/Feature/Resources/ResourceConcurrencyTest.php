@@ -44,7 +44,7 @@ function rcBook(array $seed, string $time): Appointment
             customer: CustomerRef::details('Sara', '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 function rcSeed(int $capacity = 1): array

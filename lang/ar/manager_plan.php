@@ -1,0 +1,68 @@
+<?php
+
+declare(strict_types=1);
+
+return [
+    'title' => 'الخطة والفوترة',
+    'not_allowed' => 'ليست لديك صلاحية لعرض خطة المركز.',
+    'empty' => [
+        'title' => 'لا يوجد اشتراك بعد',
+        'description' => 'تواصل مع Meta Style لإعداد خطتك.',
+    ],
+    'actions' => [
+        'contact' => 'تواصل مع Meta Style',
+    ],
+    'summary' => [
+        'current' => 'الخطة الحالية',
+        'free' => 'مجاني',
+        'read_only' => 'لوحة الإدارة للقراءة فقط حتى يُعاد تفعيل اشتراكك. بياناتك محفوظة.',
+        'trial_ends' => 'تنتهي الفترة التجريبية',
+        'days_left' => '{0} تنتهي اليوم|{1} يوم واحد متبقٍ|{2} يومان متبقيان|[3,10] :count أيام متبقية|[11,*] :count يومًا متبقيًا',
+        'renews' => 'يتجدد في',
+        'grace_ends' => 'تنتهي فترة السماح',
+        'period_ended' => 'انتهت الفترة',
+        'scheduled' => 'تغيير مجدول',
+        'scheduled_to' => 'الانتقال إلى :plan',
+        'scheduled_to_on' => 'الانتقال إلى :plan في :date',
+    ],
+    'allowances' => [
+        'title' => 'الحصص',
+        'view_usage' => 'عرض الاستخدام',
+        'none' => 'لا توجد حصص محدودة.',
+        'source_plan' => 'من خطتك',
+        'source_override' => 'مخصصة لمركزك',
+        'source_default' => 'الحصة القياسية',
+    ],
+    'features' => [
+        'title' => 'الميزات المشمولة',
+        'none' => 'لا توجد ميزات مفعّلة بعد.',
+        'added' => 'مضافة',
+        'added_hint' => 'مفعّلة لمركزك إضافةً إلى خطتك',
+        'other' => 'أخرى',
+    ],
+    'compare' => [
+        'title' => 'مقارنة الخطط',
+        'cycle' => 'دورة الفوترة',
+        'monthly' => 'شهري',
+        'yearly' => 'سنوي',
+        'feature' => 'الميزة',
+        'current' => 'الحالية',
+        'recommended' => 'موصى بها',
+        'not_offered' => 'غير متاحة في هذه الدورة',
+        'per_month' => '/ شهر',
+        'per_year' => '/ سنة',
+        'save' => 'وفّر :percent%',
+        'included' => 'مشمولة',
+        'not_included' => 'غير مشمولة',
+        'allowances' => 'الحصص',
+        'actions' => 'الإجراءات',
+        'your_plan' => 'خطتك',
+        'request' => 'طلب التحويل',
+        'request_subject' => 'طلب تغيير الخطة: :plan',
+        'none' => 'لا توجد خطط عامة متاحة حاليًا.',
+        'note' => 'تغيير الخطة يتم من قبل Meta Style. اطلب التحويل وسيرد الفريق في الدعم.',
+        'focus_owned' => ':feature مشمولة بالفعل لمركزك.',
+        'focus_offered' => ':feature مميزة أدناه — اطّلع على الخطط التي تتضمنها.',
+        'focus_contact' => 'لا توجد خطة عامة تتضمن :feature بعد. تواصل مع Meta Style لتفعيلها لمركزك.',
+    ],
+];

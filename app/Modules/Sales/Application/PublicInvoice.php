@@ -37,6 +37,34 @@ final class PublicInvoice
     public function __construct(private readonly InvoiceRenderer $renderer) {}
 
     /**
+     * The invoice a live share secret opens, or null — the same resolution as
+     * {@see forToken()}, for a caller outside Sales that needs the document
+     * itself (the public payment page). Unknown, malformed and revoked secrets
+     * are all null.
+     */
+    public function invoiceForToken(#[\SensitiveParameter] string $token): ?Invoice
+    {
+        if (! InvoiceShareToken::isWellFormed($token)) {
+            return null;
+        }
+
+        /** @var InvoiceShareLink|null $link */
+        $link = InvoiceShareLink::query()
+            ->where('token_hash', InvoiceShareToken::hash($token))
+            ->whereNotNull('active_invoice_id')
+            ->first();
+
+        if (! $link instanceof InvoiceShareLink) {
+            return null;
+        }
+
+        /** @var Invoice|null $invoice */
+        $invoice = Invoice::query()->whereKey($link->invoice_id)->first();
+
+        return $invoice;
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
     public function forToken(#[\SensitiveParameter] string $token, ?string $locale = null): ?array

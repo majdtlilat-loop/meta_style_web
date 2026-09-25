@@ -209,7 +209,7 @@ it('abandons a BOOKED visit through the booking lifecycle, not around it', funct
                 customer: CustomerRef::details('Booked customer', '+96475'.random_int(10000000, 99999999)),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         $journey = app(CheckInAppointment::class)($appointment, $owner);
 

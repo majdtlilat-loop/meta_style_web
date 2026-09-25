@@ -8,10 +8,12 @@ This repository is the canonical home of the Laravel backend, Meta Style Web
 (center administration, host/reception, POS) and the REST APIs. Flutter clients
 live in their own repositories.
 
-**Status: Phases 0–9 complete** — tenancy, identity and roles, entitlements,
-catalog, customers, booking, service journeys and resources, the queue, and
-sales with the POS till, immutable invoices, cashier shifts and printing.
-No payments or finance yet. See [`docs/13-ROADMAP.md`](docs/13-ROADMAP.md).
+**Status: Phases 0–9 complete; Phase 10 implemented, awaiting approval** —
+tenancy, identity and roles, entitlements, catalog, customers, booking, service
+journeys and resources, the queue, sales with the POS till, immutable invoices,
+cashier shifts and printing, and now payments, refunds, gateway accounts (FIB),
+the center ledger, expenses and counted shift closes.
+See [`docs/13-ROADMAP.md`](docs/13-ROADMAP.md).
 
 ## Stack
 

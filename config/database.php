@@ -98,6 +98,31 @@ return [
             ]) : [],
         ],
 
+        /*
+         * Read-only reporting endpoint template. Its database name is bound
+         * lazily from the current tenant by Kernel\Reporting\ReportConnection.
+         * Empty credentials are valid while Advanced Reports are not enabled;
+         * Primary/Standard reads never inspect this connection.
+         */
+        'reporting_template' => [
+            'driver' => env('DB_REPORTING_DRIVER', 'mysql'),
+            'host' => env('DB_REPORTING_HOST'),
+            'port' => env('DB_REPORTING_PORT', '3306'),
+            'database' => null,
+            'username' => env('DB_REPORTING_USERNAME'),
+            'password' => env('DB_REPORTING_PASSWORD'),
+            'unix_socket' => env('DB_REPORTING_SOCKET', ''),
+            'charset' => 'utf8mb4',
+            'collation' => 'utf8mb4_unicode_ci',
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'strict' => true,
+            'engine' => 'InnoDB',
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                (PHP_VERSION_ID >= 80500 ? Mysql::ATTR_SSL_CA : PDO::MYSQL_ATTR_SSL_CA) => env('DB_REPORTING_SSL_CA'),
+            ]) : [],
+        ],
+
     ],
 
     /*

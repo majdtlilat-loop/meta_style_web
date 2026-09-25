@@ -27,6 +27,7 @@ use Illuminate\Support\Str;
  * @property int $user_id
  * @property int|null $active_user_id
  * @property ShiftStatus $status
+ * @property int|null $opening_cash_minor
  * @property Carbon $opened_at
  * @property Carbon|null $closed_at
  * @property string|null $opening_note
@@ -49,6 +50,7 @@ final class CashierShift extends Model
     {
         return [
             'status' => ShiftStatus::class,
+            'opening_cash_minor' => 'integer',
             'opened_at' => 'datetime',
             'closed_at' => 'datetime',
         ];

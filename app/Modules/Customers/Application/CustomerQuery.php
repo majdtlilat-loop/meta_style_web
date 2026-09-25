@@ -4,12 +4,18 @@ declare(strict_types=1);
 
 namespace App\Modules\Customers\Application;
 
+use App\Kernel\Authorization\BranchScope;
 use App\Kernel\Authorization\Permission;
 use App\Kernel\Contact\PhoneNumber;
 use App\Kernel\Identity\Models\User;
 use App\Modules\Customers\Domain\Models\Customer;
+use Carbon\CarbonImmutable;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
  * The CRM customer list.
@@ -26,11 +32,17 @@ use Illuminate\Database\Eloquent\Builder;
  * that would turn the list into an oracle that answers "is this person a
  * customer here" one query at a time, which is exactly what the masking
  * prevents (docs/06-AUTH-ROLES-PERMISSIONS.md §6, rule 4).
+ *
+ * VISITS ARE READ AS TABLES, NOT MODELS. "Has visited" and "last visit" come
+ * from `service_journeys` (a walk-in carries the customer; a booked visit
+ * reaches them through its appointment), read by table name exactly as
+ * {@see SqlCustomerReportReader} does — Customers never imports the modules
+ * above it (docs/04-MODULE-BOUNDARIES.md).
  */
 final class CustomerQuery
 {
     /**
-     * @param  array{search?: string|null, archived?: bool|null, registered?: bool|null, tag?: string|null}  $filters
+     * @param  array{search?: string|null, archived?: bool|null, registered?: bool|null, tag?: string|null, visited?: bool|null}  $filters
      * @return LengthAwarePaginator<int, Customer>
      */
     public function paginate(array $filters, User $viewer, int $perPage = 25): LengthAwarePaginator
@@ -57,7 +69,151 @@ final class CustomerQuery
             $query->whereHas('tags', fn (Builder $q) => $q->where('customer_tags.uuid', $tag));
         }
 
+        if (isset($filters['visited'])) {
+            $this->applyVisited($query, $filters['visited'], $viewer->branchScope());
+        }
+
         return $query->paginate(min($perPage, 100))->withQueryString();
+    }
+
+    /**
+     * One customer for the profile page, with what the profile renders.
+     *
+     * @throws AuthorizationException
+     */
+    public function find(string $uuid, User $viewer): Customer
+    {
+        if (! $viewer->hasPermission(Permission::CustomerView)) {
+            throw new AuthorizationException(__('manager_customers.errors.may_not_view'));
+        }
+
+        /** @var Customer|null $customer */
+        $customer = Customer::query()
+            ->with(['tags', 'account', 'internalNotes.author'])
+            ->where('uuid', $uuid)
+            ->first();
+
+        if (! $customer instanceof Customer) {
+            throw new NotFoundHttpException;
+        }
+
+        return $customer;
+    }
+
+    /**
+     * The customer a full phone number already belongs to, for the "link, never
+     * duplicate" prompt on the create form.
+     *
+     * Null for anyone without `customer.contact.view`: answering them would be
+     * the same oracle the search refuses. Null too for the record being edited.
+     */
+    public function ownerOfPhone(User $viewer, string $country, string $number, ?string $exceptUuid = null): ?Customer
+    {
+        if (! $viewer->hasPermission(Permission::CustomerContactView)) {
+            return null;
+        }
+
+        $phone = PhoneNumber::fromParts($country, $number);
+
+        if ($phone === null) {
+            return null;
+        }
+
+        /** @var Customer|null $owner */
+        $owner = Customer::query()
+            ->where('phone', $phone->e164)
+            ->when($exceptUuid !== null, fn (Builder $q) => $q->where('uuid', '!=', $exceptUuid))
+            ->first();
+
+        return $owner;
+    }
+
+    /**
+     * When each of these customers last arrived for a visit the viewer may see
+     * — two grouped queries for the whole page, never one per row.
+     *
+     * @param  list<int>  $customerIds
+     * @return array<int, CarbonImmutable> keyed by customer id
+     */
+    public function lastVisits(array $customerIds, User $viewer): array
+    {
+        if ($customerIds === []) {
+            return [];
+        }
+
+        $scope = $viewer->branchScope();
+        $connection = DB::connection('tenant');
+
+        $walkIns = $scope->applyTo(
+            $connection->table('service_journeys')
+                ->whereIn('customer_id', $customerIds)
+                ->whereNotNull('arrived_at')
+                ->selectRaw('customer_id, MAX(arrived_at) as last_at')
+                ->groupBy('customer_id'),
+            'branch_id',
+        );
+
+        $booked = $scope->applyTo(
+            $connection->table('service_journeys as journeys')
+                ->join('appointments', 'appointments.id', '=', 'journeys.appointment_id')
+                ->whereIn('appointments.customer_id', $customerIds)
+                ->whereNotNull('journeys.arrived_at')
+                ->selectRaw('appointments.customer_id as customer_id, MAX(journeys.arrived_at) as last_at')
+                ->groupBy('appointments.customer_id'),
+            'appointments.branch_id',
+        );
+
+        $last = [];
+
+        foreach ([$walkIns, $booked] as $query) {
+            foreach ($query->get() as $row) {
+                /** @var object{customer_id: int|string, last_at: string|null} $row */
+                if ($row->last_at === null) {
+                    continue;
+                }
+
+                $at = CarbonImmutable::parse($row->last_at, 'UTC');
+                $id = (int) $row->customer_id;
+
+                if (! isset($last[$id]) || $at->greaterThan($last[$id])) {
+                    $last[$id] = $at;
+                }
+            }
+        }
+
+        return $last;
+    }
+
+    /**
+     * "Has visited" means at least one COMPLETED visit in a branch the viewer
+     * may see — a booking that never happened is not a visit.
+     *
+     * @param  Builder<Customer>  $query
+     */
+    private function applyVisited(Builder $query, bool $visited, BranchScope $scope): void
+    {
+        $walkIn = function (QueryBuilder $q) use ($scope): void {
+            $q->selectRaw('1')->from('service_journeys')
+                ->whereColumn('service_journeys.customer_id', 'customers.id')
+                ->where('service_journeys.status', 'completed');
+            $scope->applyTo($q, 'service_journeys.branch_id');
+        };
+
+        $booked = function (QueryBuilder $q) use ($scope): void {
+            $q->selectRaw('1')->from('service_journeys')
+                ->join('appointments', 'appointments.id', '=', 'service_journeys.appointment_id')
+                ->whereColumn('appointments.customer_id', 'customers.id')
+                ->where('service_journeys.status', 'completed');
+            $scope->applyTo($q, 'appointments.branch_id');
+        };
+
+        if ($visited) {
+            $query->where(fn (Builder $q) => $q->whereExists($walkIn)->orWhereExists($booked));
+
+            return;
+        }
+
+        $query->whereNotExists($walkIn)->whereNotExists($booked);
     }
 
     /**
@@ -91,11 +247,12 @@ final class CustomerQuery
             }
 
             // A partial number is still useful at the desk ("the one ending
-            // 4567"), and this caller is allowed to see full numbers anyway.
-            $digits = preg_replace('/\D+/', '', $search) ?? '';
+            // 4567", "0750 12…"), and this caller is allowed to see full numbers
+            // anyway. A national trunk zero is dropped: E.164 never stores it.
+            $digits = ltrim(preg_replace('/\D+/', '', $search) ?? '', '0');
 
             if (mb_strlen($digits) >= 4) {
-                $q->orWhere('phone', 'like', '%'.$digits);
+                $q->orWhere('phone', 'like', '%'.$digits.'%');
             }
         });
     }

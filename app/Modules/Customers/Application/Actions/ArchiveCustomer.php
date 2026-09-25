@@ -90,7 +90,7 @@ final class ArchiveCustomer
     private function authorize(User $actingUser): void
     {
         if (! $actingUser->hasPermission(Permission::CustomerArchive)) {
-            throw new AuthorizationException('You may not archive customers.');
+            throw new AuthorizationException(__('manager_customers.errors.may_not_archive'));
         }
     }
 }

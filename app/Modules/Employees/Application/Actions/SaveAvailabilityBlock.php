@@ -61,6 +61,12 @@ final class SaveAvailabilityBlock
     ): EmployeeAvailabilityBlock {
         $this->authorize($actingUser);
 
+        // The block being edited must itself be in the actor's branches — a
+        // scoped manager may not move somebody else's block into their own.
+        if ($block !== null) {
+            $this->assertMayTouch($block, $actingUser);
+        }
+
         $employee = $this->employee((string) ($data['employee'] ?? ''));
         $branch = $this->branch((string) ($data['branch'] ?? ''), $actingUser);
         $window = $this->window($data, $branch);
@@ -125,6 +131,7 @@ final class SaveAvailabilityBlock
     public function delete(EmployeeAvailabilityBlock $block, User $actingUser): void
     {
         $this->authorize($actingUser);
+        $this->assertMayTouch($block, $actingUser);
 
         $snapshot = $this->snapshot($block);
         $uuid = $block->uuid;
@@ -178,7 +185,7 @@ final class SaveAvailabilityBlock
 
         if ($end <= $start) {
             throw ValidationException::withMessages([
-                'ends_at' => 'A block must end after it starts.',
+                'ends_at' => __('manager_staff.errors.block_order'),
             ]);
         }
 
@@ -188,7 +195,7 @@ final class SaveAvailabilityBlock
     private function instant(string $value, Branch $branch): CarbonImmutable
     {
         if ($value === '') {
-            throw ValidationException::withMessages(['starts_at' => 'A block needs a start and an end.']);
+            throw ValidationException::withMessages(['starts_at' => __('manager_staff.errors.block_window')]);
         }
 
         // `2026-10-14 13:00` — a branch-local wall clock.
@@ -200,7 +207,7 @@ final class SaveAvailabilityBlock
 
             if ($utc === null) {
                 throw ValidationException::withMessages([
-                    'starts_at' => 'That time does not exist on that date at this branch.',
+                    'starts_at' => __('manager_staff.errors.block_dst'),
                 ]);
             }
 
@@ -210,7 +217,7 @@ final class SaveAvailabilityBlock
         try {
             return CarbonImmutable::parse($value)->utc();
         } catch (\Throwable) {
-            throw ValidationException::withMessages(['starts_at' => 'That is not a valid time.']);
+            throw ValidationException::withMessages(['starts_at' => __('manager_staff.errors.block_time')]);
         }
     }
 
@@ -235,7 +242,7 @@ final class SaveAvailabilityBlock
         $employee = Employee::query()->where('uuid', $uuid)->first();
 
         if (! $employee instanceof Employee) {
-            throw ValidationException::withMessages(['employee' => 'That team member does not exist.']);
+            throw ValidationException::withMessages(['employee' => __('manager_staff.errors.employee_unknown')]);
         }
 
         return $employee;
@@ -246,11 +253,11 @@ final class SaveAvailabilityBlock
         $branch = Branch::query()->where('uuid', $uuid)->first();
 
         if (! $branch instanceof Branch) {
-            throw ValidationException::withMessages(['branch' => 'That branch does not exist.']);
+            throw ValidationException::withMessages(['branch' => __('manager_staff.errors.branch_unknown')]);
         }
 
         if (! $actingUser->canAccessBranch((int) $branch->getKey())) {
-            throw new AuthorizationException('You may not work in that branch.');
+            throw new AuthorizationException(__('manager_staff.errors.branch_denied'));
         }
 
         return $branch;
@@ -264,7 +271,7 @@ final class SaveAvailabilityBlock
     {
         if (! in_array((int) $branch->getKey(), $employee->branchIds(), true)) {
             throw ValidationException::withMessages([
-                'branch' => 'That team member does not work at that branch.',
+                'branch' => __('manager_staff.errors.block_branch'),
             ]);
         }
     }
@@ -275,7 +282,17 @@ final class SaveAvailabilityBlock
     private function authorize(User $actingUser): void
     {
         if (! $actingUser->hasPermission(Permission::AvailabilityBlockManage)) {
-            throw new AuthorizationException('You may not manage availability blocks.');
+            throw new AuthorizationException(__('manager_staff.errors.block_denied'));
+        }
+    }
+
+    /**
+     * @throws AuthorizationException
+     */
+    private function assertMayTouch(EmployeeAvailabilityBlock $block, User $actingUser): void
+    {
+        if (! $actingUser->canAccessBranch((int) $block->branch_id)) {
+            throw new AuthorizationException(__('manager_staff.errors.branch_denied'));
         }
     }
 }

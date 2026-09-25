@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Modules\Booking\Application\AppointmentPresenter;
 use App\Modules\Booking\Application\CalendarQuery;
 use App\Modules\Booking\Contracts\BookingEngine;
@@ -136,7 +137,7 @@ it('does not issue more queries as the day fills up', function (): void {
                     customer: CustomerRef::details('Customer '.$hour, '+96475000000'.$hour),
                 ),
                 BookingActor::staff($this->ownerWithCatalogAccess()),
-            );
+            )->appointment;
         }
 
         $fresh = app(AvailabilityEngine::class);
@@ -173,10 +174,19 @@ it('renders a week calendar without a query per appointment', function (): void 
                     customer: CustomerRef::details('Customer '.$i, '+9647500000'.str_pad((string) $i, 3, '0', STR_PAD_LEFT)),
                 ),
                 BookingActor::staff($owner),
-            );
+            )->appointment;
         }
 
         $presenter = app(AppointmentPresenter::class);
+
+        // One render first. The center's content locales (`default_locale`,
+        // `enabled_locales`) are read ONCE per request, by the first
+        // TranslatedText::get() in tenant context, and memoised (TenantLocales
+        // is scoped). That is a constant per request, not a cost per
+        // appointment; left in the first measurement only, it made the two
+        // counts differ by exactly those two reads.
+        app(CalendarQuery::class)->forRange(PERF_DATE, PERF_DATE, $owner)
+            ->each(fn (Appointment $a) => $presenter->summary($a, $owner));
 
         $one = countQueries(function () use ($owner, $presenter): void {
             $page = app(CalendarQuery::class)->forRange(PERF_DATE, PERF_DATE, $owner);
@@ -198,7 +208,7 @@ it('renders a week calendar without a query per appointment', function (): void 
                     customer: CustomerRef::details('Customer '.$i, '+9647500000'.str_pad((string) $i, 3, '0', STR_PAD_LEFT)),
                 ),
                 BookingActor::staff($owner),
-            );
+            )->appointment;
         }
 
         $two = countQueries(function () use ($owner, $presenter): void {
@@ -213,7 +223,8 @@ it('renders a week calendar without a query per appointment', function (): void 
 
 it('keeps public availability free of anything private', function (): void {
     $center = $this->registerCenter();
-    $key = $this->publicKeyOf($center['tenant']);
+    // The guest API lives on the center's own host since Phase 15.
+    $slug = $center['registration']->requested_slug;
 
     $seed = $this->asCenter($center['tenant'], function (): array {
         $seed = $this->seedBookableCenter();
@@ -229,12 +240,12 @@ it('keeps public availability free of anything private', function (): void {
                 customer: CustomerRef::existing($customer->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        );
+        )->appointment;
 
         return $seed;
     });
 
-    $response = $this->getJson("/api/v1/menu/{$key}/availability?".http_build_query([
+    $response = $this->getJson(app(PlatformHosts::class)->centerUrl($slug, "/api/v1/menu/{$slug}/availability?").http_build_query([
         'branch' => $seed['branch']->uuid,
         'from' => PERF_DATE,
         'services' => [['service' => $seed['service']->uuid]],

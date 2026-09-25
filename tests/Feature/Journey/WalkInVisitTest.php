@@ -324,7 +324,7 @@ it('never lets a walk-in take capacity a booking has already committed', functio
                 customer: CustomerRef::details('Booked customer', '+96475'.random_int(10000000, 99999999)),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         $journey = wiCreate($seed, $owner, ['name' => 'Early bird']);
 
@@ -363,7 +363,7 @@ it('leaves the booked journey path exactly as it was', function (): void {
                 customer: CustomerRef::details('Booked customer', '+96475'.random_int(10000000, 99999999)),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         $journey = app(CheckInAppointment::class)($appointment, $owner);
 

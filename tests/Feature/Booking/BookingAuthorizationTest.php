@@ -47,7 +47,7 @@ function bookAs(array $seed, User $user, string $at = '10:00'): Appointment
             customer: CustomerRef::details('Sara Ahmed', '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff($user),
-    );
+    )->appointment;
 }
 
 it('adds nine appointment permissions and grants them to the right roles', function (): void {

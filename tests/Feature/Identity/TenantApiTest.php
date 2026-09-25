@@ -117,6 +117,7 @@ it('lists and creates employees through the API', function (): void {
     $created = $this->withHeaders($headers)->postJson('/api/v1/tenant/employees', [
         'name' => ['en' => 'Sara', 'ar' => 'سارة'],
         'email' => 'sara@alpha.test',
+        'phone' => '+9647701230011',
     ])->assertCreated();
 
     expect($created->json('data.has_login'))->toBeTrue()
@@ -176,6 +177,7 @@ it('deactivates an employee through the API and revokes their access', function 
     $created = $this->withHeaders($headers)->postJson('/api/v1/tenant/employees', [
         'name' => ['en' => 'Sara'],
         'email' => 'sara@alpha.test',
+        'phone' => '+9647701230012',
     ])->assertCreated();
 
     $this->withHeaders($headers)

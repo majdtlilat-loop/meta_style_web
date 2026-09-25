@@ -1,0 +1,113 @@
+/*
+ * Manager — customers. Owned by one area: component styles for that area only.
+ * Shared primitives live in platform/components.css.
+ *
+ * The CRM list and the customer page (profile, history panels, notes), the
+ * customer's benefits panel, the loyalty / memberships / packages pages and
+ * the reviews page. Tokens only; logical properties only, so the same rules
+ * serve Arabic and Kurdish right-to-left, in light and dark.
+ */
+
+/* ── CRM list ────────────────────────────────────────────────────────── */
+.crm-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.crm-masked { display: inline-flex; align-items: center; gap: .25rem; color: var(--color-text-subtle); }
+.crm-masked .ui-icon { flex: 0 0 auto; }
+.crm td.actions { white-space: nowrap; }
+.crm td.actions .dropdown { display: inline-block; }
+.crm-duplicate { align-items: center; }
+.crm-duplicate > p { flex: 1 1 12rem; }
+
+/* ── Customer page ───────────────────────────────────────────────────── */
+.crm-profile__header .record-header__identity { flex: 1 1 18rem; }
+.crm-profile__header h1 { overflow-wrap: anywhere; }
+.crm-profile .kv-grid dd { font-weight: var(--weight-body); overflow-wrap: anywhere; }
+.crm-kv-tight { grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--space-3); }
+.crm-prefs { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.crm-prefs > li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
+.crm-note { margin: 0; font-size: var(--text-sm); line-height: var(--leading-body); }
+
+/* Visits timeline */
+.crm-timeline { padding: var(--space-4) var(--space-5) 0; }
+.crm-timeline__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.crm-stages { display: grid; gap: .3rem; margin: var(--space-2) 0 0; padding: 0; list-style: none; }
+.crm-stages > li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
+.crm-stages > li > span:first-child { font-weight: var(--weight-strong); }
+
+/* Notes */
+.crm-note-list > li { align-items: flex-start; }
+.crm-note-list .crm-note { display: grid; gap: var(--space-2); flex: 1 1 auto; min-width: 0; }
+.crm-note-list .prewrap { overflow-wrap: anywhere; }
+.crm-note__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
+.crm-reviews { padding: var(--space-4) var(--space-5); }
+
+/* ── The customer's benefits panel ───────────────────────────────────── */
+.benefits-strip { border: 0; border-block-end: 1px solid var(--color-divider); border-radius: 0; }
+.benefits-strip .stat-strip__item small { font-size: var(--text-xs); }
+.benefits-strip .stat-strip__item strong.benefits-strip__text { font-size: var(--text-md); overflow-wrap: anywhere; }
+.benefit-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap: var(--space-3); }
+.benefit-card { display: grid; align-content: start; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-elevated); min-width: 0; }
+.benefit-card[data-state="expired"], .benefit-card[data-state="cancelled"] { background: var(--color-surface-muted); }
+.benefit-card[data-state="expired"] h3, .benefit-card[data-state="cancelled"] h3 { color: var(--color-text-muted); }
+.benefit-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); }
+.benefit-card__head h3 { margin: 0; font-size: var(--text-md); overflow-wrap: anywhere; }
+.benefit-card__dates { margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
+.benefit-card__lines { display: grid; gap: var(--space-2); margin: 0; padding: var(--space-2) 0; border-block-start: 1px solid var(--color-divider); list-style: none; font-size: var(--text-sm); }
+.benefit-card__lines > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem var(--space-2); }
+.benefit-card__lines > li > span:first-child { flex: 1 1 8rem; min-width: 0; }
+.benefit-card__meter { flex: 1 0 100%; inline-size: 100%; block-size: .4rem; border: 0; border-radius: var(--radius-pill); background: var(--color-surface-muted); accent-color: var(--color-primary); appearance: none; overflow: hidden; }
+.benefit-card__meter::-webkit-progress-bar { border-radius: var(--radius-pill); background: var(--color-surface-muted); }
+.benefit-card__meter::-webkit-progress-value { border-radius: var(--radius-pill); background: var(--color-primary); }
+.benefit-card__meter::-moz-progress-bar { border-radius: var(--radius-pill); background: var(--color-primary); }
+.benefit-card__note { display: flex; align-items: flex-start; gap: .35rem; margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
+.benefit-card__foot { display: flex; justify-content: flex-end; }
+.benefit-card__cancel { display: grid; gap: var(--space-2); padding-block-start: var(--space-2); border-block-start: 1px solid var(--color-danger-border); }
+.benefit-card__cancel .field { margin: 0; }
+
+/* ── Loyalty, memberships, packages pages ────────────────────────────── */
+.benefits-kpis .stat__value { font-variant-numeric: tabular-nums; }
+.benefits-toggle { margin: 0; font-size: var(--text-sm); white-space: nowrap; }
+.benefits-threshold { flex: 0 0 auto; color: var(--color-text-muted); font-size: var(--text-sm); }
+.row-list__item[data-muted="true"] .cell-title { color: var(--color-text-muted); }
+.benefits-switches { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.benefits-switches > li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--space-3); }
+.benefits-switches > li > div { display: grid; gap: .1rem; font-size: var(--text-sm); }
+.benefits-switches > li > .status, .benefits-switches > li > .badge { min-inline-size: 4.5rem; justify-content: center; }
+.benefits-search { padding: var(--space-3) var(--space-5); border-block-end: 1px solid var(--color-divider); }
+.benefits-search .search-input { max-inline-size: 26rem; }
+.benefits-holders { display: flex; align-items: center; gap: .35rem; margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
+.benefits-row { align-items: flex-end; }
+.benefits-row__fields { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, .8fr) minmax(0, .9fr); }
+.benefits-row__fields--3 { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.2fr) minmax(0, .7fr); }
+.benefits-row__fields .field { margin: 0; gap: .2rem; }
+.benefits-row__fields .field > label { color: var(--color-text-muted); font-size: var(--text-xs); }
+.benefits-page .plan-card__foot { flex-wrap: wrap; }
+.benefits-page .record-aside .timeline { margin-block-start: var(--space-1); }
+
+/* ── Reviews ─────────────────────────────────────────────────────────── */
+.reviews-summary-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+.review-summary-card { padding: var(--space-5); }
+.review-summary-card .review-summary { gap: var(--space-5); }
+.reviews-summary-grid .hbars__track > span { background: var(--color-primary); }
+.reviews-pager { padding-block: var(--space-2); }
+[dir="rtl"] .reviews-pager .ui-icon { transform: scaleX(-1); }
+.review-card .chip .ui-icon { margin-inline-end: .2rem; }
+
+/* ── Small screens ───────────────────────────────────────────────────── */
+@media (max-width: 64rem) {
+    .reviews-summary-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .review-summary-card { grid-column: 1 / -1; }
+}
+
+@media (max-width: 48rem) {
+    .crm-profile__header .cluster { inline-size: 100%; }
+    .crm-profile__header .cluster > * { flex: 1 1 auto; }
+    .crm-timeline { padding-inline: var(--space-4); }
+    .crm-reviews { padding-inline: var(--space-3); }
+    .benefits-search { padding-inline: var(--space-4); }
+    .benefits-row { flex-wrap: wrap; }
+    .benefits-row__fields, .benefits-row__fields--3 { grid-template-columns: minmax(0, 1fr); }
+    .benefits-switches > li { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+    .reviews-summary-grid { grid-template-columns: minmax(0, 1fr); }
+    .review-summary-card .review-summary { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+    .reviews-pager > .button { flex: 1 1 0; justify-content: center; }
+}

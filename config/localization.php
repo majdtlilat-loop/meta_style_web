@@ -27,16 +27,22 @@ return [
         'en' => [
             'name_native' => 'English',
             'name_en' => 'English',
+            'short_label' => 'EN',
+            'icon' => 'language-en',
             'direction' => 'ltr',
         ],
         'ar' => [
             'name_native' => 'العربية',
             'name_en' => 'Arabic',
+            'short_label' => 'AR',
+            'icon' => 'language-ar',
             'direction' => 'rtl',
         ],
         'ckb' => [
-            'name_native' => 'کوردیی ناوەندی',
+            'name_native' => 'کوردی سۆرانی',
             'name_en' => 'Kurdish (Sorani)',
+            'short_label' => 'KU',
+            'icon' => 'language-ku',
             'direction' => 'rtl',
         ],
     ],

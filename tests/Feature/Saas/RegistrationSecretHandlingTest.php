@@ -58,6 +58,7 @@ it('keeps the credential out of the queued job payload', function (): void {
         'center_name' => 'Queued Center',
         'owner_name' => 'Owner',
         'owner_email' => 'owner@queued.test',
+        'owner_phone' => '+9647701234567',
         'password' => PLAINTEXT,
     ], 'idem-queue-secret')['registration'];
 
@@ -77,6 +78,7 @@ it('stores the hash encrypted, not as a readable bcrypt string', function (): vo
         'center_name' => 'Encrypted Center',
         'owner_name' => 'Owner',
         'owner_email' => 'owner@enc.test',
+        'owner_phone' => '+9647701234567',
         'password' => PLAINTEXT,
     ], 'idem-encrypted')['registration'];
 
@@ -105,6 +107,7 @@ it('keeps the credential when provisioning fails, but only encrypted', function 
         'center_name' => 'Failing Center',
         'owner_name' => 'Owner',
         'owner_email' => 'owner@failing.test',
+        'owner_phone' => '+9647701234567',
         'password' => PLAINTEXT,
     ], 'idem-failing-secret')['registration'];
 

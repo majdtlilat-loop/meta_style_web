@@ -17,14 +17,27 @@ use App\Modules\Sales\Domain\Exceptions\SaleFailed;
  *
  *     line subtotal   = (unit price + add-ons per unit) × quantity
  *     subtotal        = Σ line subtotals
- *     percent amount  = round_half_up(subtotal × basis points ÷ 10 000)
- *     discount total  = Σ discount amounts          (must not exceed subtotal)
+ *     targeted        = Σ fixed discounts that belong to ONE line
+ *                                                   (each ≤ what is left of its line)
+ *     base            = subtotal − targeted
+ *     percent amount  = round_half_up(base × basis points ÷ 10 000)
+ *     discount total  = targeted + Σ other discount amounts
+ *                                                   (the others must not exceed base)
  *     surcharge total = Σ surcharge amounts
  *     tax total       = 0                           (a seam, not a guess)
  *     grand total     = subtotal − discount total + surcharge total + tax total
  *
- * Every percentage is taken from the SUBTOTAL, so two percentage discounts do
- * not compound and the order they were added in cannot change the answer.
+ * Every percentage is taken from the same BASE, so two percentage discounts do
+ * not compound and the order they were added in cannot change the answer. With
+ * no line-targeted discount the base IS the subtotal — exactly the Phase 9 rule.
+ *
+ * ## Line-targeted discounts
+ *
+ * A benefit that belongs to one line — a service covered by a package, a
+ * member's price on a haircut — is a fixed discount carrying that line's index.
+ * It is allocated to that line alone and can never exceed it; a sale-wide 10%
+ * is then taken from what is still payable, so it cannot discount the part a
+ * package already covered (docs/18-SALES.md §12, docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md).
  *
  * ## One rounding rule
  *
@@ -81,16 +94,54 @@ final class SalePricing
             ]);
         }
 
-        $discount = 0;
-        $surcharge = 0;
-        $amounts = [];
+        $amounts = array_fill(0, count($adjustments), 0);
 
-        foreach ($adjustments as $adjustment) {
+        // 1 — discounts that belong to one line, each bounded by that line.
+        $targeted = array_fill(0, count($subtotals), 0);
+
+        foreach ($adjustments as $position => $adjustment) {
+            if ($adjustment->targetLine === null) {
+                continue;
+            }
+
+            $line = $adjustment->targetLine;
+
+            if (! $adjustment->type->isDiscount() || $adjustment->type->isPercentage()) {
+                throw SaleFailed::policy('Only a fixed discount can belong to a single line.');
+            }
+
+            if (! array_key_exists($line, $subtotals)) {
+                throw SaleFailed::policy('That discount belongs to a line that is not on this sale.');
+            }
+
             $amount = $this->resolve($adjustment, $subtotal);
-            $amounts[] = $amount;
+
+            if ($subtotals[$line] < $targeted[$line] + $amount) {
+                throw SaleFailed::policy('That discount is larger than the line it applies to.', [
+                    'line_subtotal_minor' => $subtotals[$line],
+                    'line_discount_minor' => $targeted[$line] + $amount,
+                ]);
+            }
+
+            $targeted[$line] += $amount;
+            $amounts[$position] = $amount;
+        }
+
+        // 2 — everything else, from what is still payable after step 1.
+        $base = $subtotal - array_sum($targeted);
+        $saleDiscount = 0;
+        $surcharge = 0;
+
+        foreach ($adjustments as $position => $adjustment) {
+            if ($adjustment->targetLine !== null) {
+                continue;
+            }
+
+            $amount = $this->resolve($adjustment, $base);
+            $amounts[$position] = $amount;
 
             if ($adjustment->type->isDiscount()) {
-                $discount += $amount;
+                $saleDiscount += $amount;
             } else {
                 $surcharge += $amount;
             }
@@ -101,10 +152,10 @@ final class SalePricing
          * create discountable value: "20% off, plus a delivery fee" must not
          * let the discount eat the fee and push the goods below nothing.
          */
-        if ($discount > $subtotal) {
+        if ($saleDiscount > $base) {
             throw SaleFailed::policy('Those discounts are larger than the sale.', [
                 'subtotal_minor' => $subtotal,
-                'discount_total_minor' => $discount,
+                'discount_total_minor' => $saleDiscount + array_sum($targeted),
             ]);
         }
 
@@ -112,15 +163,23 @@ final class SalePricing
             throw SaleFailed::policy('Those surcharges are larger than a single sale may be.');
         }
 
-        $allocations = self::allocate($discount, $subtotals);
+        // Sale-level discounts spread over what each line still owes.
+        $allocations = self::allocate($saleDiscount, array_map(
+            static fn (int $lineSubtotal, int $lineTargeted): int => $lineSubtotal - $lineTargeted,
+            $subtotals,
+            $targeted,
+        ));
 
+        $discount = $saleDiscount + array_sum($targeted);
         $priced = [];
 
         foreach ($subtotals as $index => $lineSubtotal) {
+            $allocated = $targeted[$index] + $allocations[$index];
+
             $priced[] = new PricedLine(
                 subtotalMinor: $lineSubtotal,
-                discountAllocatedMinor: $allocations[$index],
-                totalMinor: $lineSubtotal - $allocations[$index],
+                discountAllocatedMinor: $allocated,
+                totalMinor: $lineSubtotal - $allocated,
             );
         }
 
@@ -133,7 +192,7 @@ final class SalePricing
             taxTotalMinor: $tax,
             grandTotalMinor: $subtotal - $discount + $surcharge + $tax,
             lines: $priced,
-            adjustmentAmounts: $amounts,
+            adjustmentAmounts: array_values($amounts),
         );
     }
 

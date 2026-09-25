@@ -13,6 +13,7 @@ use App\Modules\Booking\Domain\Data\AvailabilityQuery;
 use App\Modules\Booking\Domain\Data\AvailabilitySlot;
 use App\Modules\Booking\Domain\Data\BookingActor;
 use App\Modules\Booking\Domain\Data\BookingRequest;
+use App\Modules\Booking\Domain\Data\BookingResult;
 use App\Modules\Booking\Domain\Enums\AppointmentStatus;
 use App\Modules\Booking\Domain\Models\Appointment;
 use Carbon\CarbonImmutable;
@@ -47,7 +48,7 @@ final class MetaStyleBookingEngine implements BookingEngine
         return $this->availability->slots($query, $publicChannel);
     }
 
-    public function book(BookingRequest $request, BookingActor $actor): Appointment
+    public function book(BookingRequest $request, BookingActor $actor): BookingResult
     {
         return ($this->create)($request, $actor);
     }

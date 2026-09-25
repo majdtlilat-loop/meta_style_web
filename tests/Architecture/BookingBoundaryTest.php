@@ -17,36 +17,45 @@ declare(strict_types=1);
 |
 */
 
-arch('the booking engine is the only thing that writes appointments')
-    ->expect([
-        'App\Http\Controllers',
-        'App\Livewire',
-    ])
+/*
+ * One expectation PER NAMESPACE. With an array of targets, a negated toUse()
+ * fails only when EVERY target uses the model, so one un-exempted class in one
+ * namespace was hidden as long as the other namespace was clean. Checked
+ * separately, any new controller or component that holds an appointment model
+ * fails on its own.
+ *
+ * A channel that can construct these can write a booking without a lock,
+ * without an availability check, without an entitlement check and without an
+ * audit entry. The Manager reads bookings through Booking-module queries that
+ * return plain arrays (CalendarQuery, CustomerProfileAppointments,
+ * AppointmentsInsideBlocks) and never holds the model.
+ *
+ * READ-ONLY exemptions, each type-hinting the model to present one or to look
+ * one up — never to create or mutate one. The engine remains the only writer,
+ * which the source scan below enforces directly.
+ */
+arch('the booking engine is the only thing that writes appointments: controllers')
+    ->expect('App\Http\Controllers')
     ->not->toUse([
-        // A channel that can construct these can write a booking without a
-        // lock, without an availability check, without an entitlement check and
-        // without an audit entry.
         'App\Modules\Booking\Domain\Models\Appointment',
         'App\Modules\Booking\Domain\Models\AppointmentItem',
         'App\Modules\Booking\Domain\Models\AppointmentItemAddon',
     ])
-    /*
-     * READ-ONLY exemptions, each type-hinting the model to present one or to
-     * look one up — never to create or mutate one. The engine remains the only
-     * writer, which the source scan below enforces directly.
-     *
-     * The Phase 7 entries are the operational surfaces: they resolve an
-     * appointment in order to check somebody in or render the board, and every
-     * mutation they make goes through a Journey or Booking Action.
-     */
     ->ignoring([
         'App\Http\Controllers\Api\AppointmentController',
         'App\Http\Controllers\Api\CustomerBookingController',
         'App\Http\Controllers\Api\AvailabilityBlockController',
         'App\Http\Controllers\Api\JourneyController',
-        'App\Livewire\Center\Calendar',
-        'App\Livewire\Center\JourneyBoard',
-        'App\Livewire\Center\Resources',
+    ]);
+
+arch('the booking engine is the only thing that writes appointments: Livewire')
+    ->expect('App\Livewire')
+    ->not->toUse([
+        'App\Modules\Booking\Domain\Models\Appointment',
+        'App\Modules\Booking\Domain\Models\AppointmentItem',
+        'App\Modules\Booking\Domain\Models\AppointmentItemAddon',
+    ])
+    ->ignoring([
         'App\Livewire\Customer\Account',
     ]);
 

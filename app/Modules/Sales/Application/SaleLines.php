@@ -77,6 +77,8 @@ final class SaleLines
             'addons_unit_total_minor' => $snapshot->addonsUnitTotalMinor(),
             'currency' => $snapshot->currency,
             'note' => $this->note($note),
+            'offering_type' => $snapshot->offeringType,
+            'offering_reference' => $snapshot->offeringReference,
         ]);
 
         foreach ($snapshot->addons as $index => $addon) {

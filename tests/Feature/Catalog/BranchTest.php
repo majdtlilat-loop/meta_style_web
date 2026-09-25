@@ -264,6 +264,14 @@ it('refuses to manage a branch outside the actor\'s scope', function (): void {
             $manager,
             $other,
         ))->toThrow(AuthorizationException::class);
+
+        // Nor open a new one: it would lie outside their scope, a branch they
+        // could then neither see nor edit.
+        expect(fn () => app(SaveBranch::class)(
+            BranchInput::fromArray(['name' => ['en' => 'Unreachable']]),
+            $manager,
+        ))->toThrow(AuthorizationException::class)
+            ->and(Branch::query()->where('name->en', 'Unreachable')->exists())->toBeFalse();
     });
 });
 

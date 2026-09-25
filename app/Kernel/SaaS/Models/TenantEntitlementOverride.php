@@ -15,6 +15,8 @@ use Illuminate\Support\Carbon;
  * @property string $tenant_id
  * @property string $entitlement
  * @property OverrideMode $mode
+ * @property Carbon|null $starts_at
+ * @property Carbon|null $expires_at
  */
 final class TenantEntitlementOverride extends Model
 {

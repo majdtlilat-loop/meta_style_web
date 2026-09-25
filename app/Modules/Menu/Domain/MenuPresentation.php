@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\Modules\Menu\Domain;
 
-use InvalidArgumentException;
-
 /**
  * A validated menu appearance: a template, a theme, and an ordered section list.
  *
@@ -23,7 +21,9 @@ use InvalidArgumentException;
  *
  * Anything unrecognised is REJECTED, not dropped. Silently discarding a value
  * would let a stored draft quietly differ from what the owner thought they
- * configured.
+ * configured. Rejections are {@see MenuPresentationRejected}, which keeps the
+ * English message the API answers with and adds a reason code the Manager
+ * translates.
  */
 final readonly class MenuPresentation
 {
@@ -45,13 +45,32 @@ final readonly class MenuPresentation
     {
         $template = self::defaultTemplateKey();
 
-        /** @var array<string, string|bool|int> $theme */
-        $theme = config("menu.templates.{$template}.theme", []);
-
-        /** @var list<array{key: string, visible: bool, config: array<string, string|bool|int>}> $sections */
+        /** @var array<mixed> $sections */
         $sections = config('menu.default_sections', []);
 
-        return new self($template, $theme, $sections);
+        // Through the validator like everything else, so a new center gets the
+        // template's preset and every section's defaults filled in.
+        return self::fromArray([
+            'template_key' => $template,
+            'theme' => self::preset($template),
+            'sections' => $sections,
+        ]);
+    }
+
+    /**
+     * What choosing a template in the editor applies: its theme with its
+     * preset on top. Only ever reaches a live page through a publish.
+     *
+     * @return array<string, string|bool|int>
+     */
+    public static function preset(string $template): array
+    {
+        /** @var array<string, string|bool|int> $theme */
+        $theme = config("menu.templates.{$template}.theme", []);
+        /** @var array<string, string|bool|int> $preset */
+        $preset = config("menu.templates.{$template}.preset", []);
+
+        return array_merge($theme, $preset);
     }
 
     /**
@@ -59,7 +78,7 @@ final readonly class MenuPresentation
      *
      * @param  array<string, mixed>  $input
      *
-     * @throws InvalidArgumentException
+     * @throws MenuPresentationRejected
      */
     public static function fromArray(array $input): self
     {
@@ -130,6 +149,15 @@ final readonly class MenuPresentation
         return isset($this->theme[$key]) ? (string) $this->theme[$key] : $fallback;
     }
 
+    /**
+     * Whether two presentations would render the same page — the editor's
+     * "unpublished changes" signal.
+     */
+    public function sameAs(self $other): bool
+    {
+        return $this->toArray() == $other->toArray();
+    }
+
     // -----------------------------------------------------------------
     // Validation
     // -----------------------------------------------------------------
@@ -140,11 +168,11 @@ final readonly class MenuPresentation
         $templates = config('menu.templates', []);
 
         if (! is_string($key) || ! array_key_exists($key, $templates)) {
-            throw new InvalidArgumentException(sprintf(
+            throw new MenuPresentationRejected(sprintf(
                 'Unknown menu template [%s]. Available: %s.',
                 is_scalar($key) ? (string) $key : gettype($key),
                 implode(', ', array_keys($templates)),
-            ));
+            ), 'unknown_template');
         }
 
         return $key;
@@ -166,12 +194,14 @@ final readonly class MenuPresentation
         $options = config('menu.theme.options', []);
 
         foreach ($input as $key => $value) {
+            $key = (string) $key;
+
             if (in_array($key, $colorKeys, true)) {
                 if (! is_string($value) || ! is_string($pattern) || preg_match($pattern, $value) !== 1) {
-                    throw new InvalidArgumentException("[{$key}] must be a six-digit hex colour such as #1a2b3c.");
+                    throw new MenuPresentationRejected("[{$key}] must be a six-digit hex colour such as #1a2b3c.", 'invalid_colour', ['setting' => $key]);
                 }
 
-                $theme[$key] = $value;
+                $theme[$key] = mb_strtolower($value);
 
                 continue;
             }
@@ -180,15 +210,15 @@ final readonly class MenuPresentation
                 // Rejected rather than ignored: an unknown key means the caller
                 // believes it configured something, and silently dropping it
                 // makes the stored draft differ from what they saw.
-                throw new InvalidArgumentException("[{$key}] is not a theme option.");
+                throw new MenuPresentationRejected("[{$key}] is not a theme option.", 'unknown_option', ['setting' => $key]);
             }
 
             if (! is_string($value) || ! in_array($value, $options[$key], true)) {
-                throw new InvalidArgumentException(sprintf(
+                throw new MenuPresentationRejected(sprintf(
                     '[%s] must be one of: %s.',
                     $key,
                     implode(', ', $options[$key]),
-                ));
+                ), 'invalid_choice', ['setting' => $key]);
             }
 
             $theme[$key] = $value;
@@ -211,24 +241,24 @@ final readonly class MenuPresentation
 
         foreach ($input as $section) {
             if (! is_array($section) || ! isset($section['key']) || ! is_string($section['key'])) {
-                throw new InvalidArgumentException('Each section needs a key.');
+                throw new MenuPresentationRejected('Each section needs a key.', 'missing_key');
             }
 
             $key = $section['key'];
 
             if (! array_key_exists($key, $catalog)) {
-                // Covers the placeholder problem too: `offers` and `reviews`
-                // are absent from the catalog because those modules do not
-                // exist, so a section promising them cannot be configured.
-                throw new InvalidArgumentException(sprintf(
+                // Covers the placeholder problem too: `offers` is absent from
+                // the catalog because that module does not exist, so a section
+                // promising it cannot be configured.
+                throw new MenuPresentationRejected(sprintf(
                     'Unknown menu section [%s]. Available: %s.',
                     $key,
                     implode(', ', array_keys($catalog)),
-                ));
+                ), 'unknown_section', ['section' => $key]);
             }
 
             if (in_array($key, $seen, true)) {
-                throw new InvalidArgumentException("Section [{$key}] appears more than once.");
+                throw new MenuPresentationRejected("Section [{$key}] appears more than once.", 'duplicate_section', ['section' => $key]);
             }
 
             $seen[] = $key;
@@ -244,7 +274,7 @@ final readonly class MenuPresentation
         }
 
         if ($sections === []) {
-            throw new InvalidArgumentException('A menu needs at least one section.');
+            throw new MenuPresentationRejected('A menu needs at least one section.', 'no_sections');
         }
 
         return $sections;
@@ -263,8 +293,10 @@ final readonly class MenuPresentation
         $config = [];
 
         foreach ($input as $key => $value) {
+            $key = (string) $key;
+
             if (! in_array($key, $allowed, true)) {
-                throw new InvalidArgumentException("[{$key}] is not a setting of the [{$section}] section.");
+                throw new MenuPresentationRejected("[{$key}] is not a setting of the [{$section}] section.", 'unknown_setting', ['setting' => $key, 'section' => $section]);
             }
 
             $rule = $rules[$key] ?? null;
@@ -273,8 +305,20 @@ final readonly class MenuPresentation
                 $rule === 'bool' => (bool) $value,
                 is_string($rule) && str_starts_with($rule, 'int:') => self::validateInt($key, $value, $rule),
                 is_array($rule) => self::validateChoice($key, $value, $rule),
-                default => throw new InvalidArgumentException("[{$key}] has no validation rule."),
+                default => throw new MenuPresentationRejected("[{$key}] has no validation rule.", 'no_rule', ['setting' => $key]),
             };
+        }
+
+        // A setting the stored section does not carry means what the renderer
+        // did before that setting existed — filled here, so every reader sees
+        // one complete, validated shape.
+        /** @var array<string, string|bool|int> $defaults */
+        $defaults = config("menu.section_defaults.{$section}", []);
+
+        foreach ($defaults as $key => $value) {
+            if (in_array($key, $allowed, true) && ! array_key_exists($key, $config)) {
+                $config[$key] = $value;
+            }
         }
 
         return $config;
@@ -285,7 +329,7 @@ final readonly class MenuPresentation
         [$min, $max] = array_map('intval', explode('..', mb_substr($rule, 4)));
 
         if (! is_numeric($value) || (int) $value < $min || (int) $value > $max) {
-            throw new InvalidArgumentException("[{$key}] must be a whole number between {$min} and {$max}.");
+            throw new MenuPresentationRejected("[{$key}] must be a whole number between {$min} and {$max}.", 'out_of_range', ['setting' => $key, 'min' => $min, 'max' => $max]);
         }
 
         return (int) $value;
@@ -297,11 +341,11 @@ final readonly class MenuPresentation
     private static function validateChoice(string $key, mixed $value, array $choices): string
     {
         if (! is_string($value) || ! in_array($value, $choices, true)) {
-            throw new InvalidArgumentException(sprintf(
+            throw new MenuPresentationRejected(sprintf(
                 '[%s] must be one of: %s.',
                 $key,
                 implode(', ', $choices),
-            ));
+            ), 'invalid_choice', ['setting' => $key]);
         }
 
         return $value;

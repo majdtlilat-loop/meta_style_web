@@ -22,6 +22,9 @@ use App\Kernel\SaaS\Models\Registration;
  */
 enum RegistrationStatus: string
 {
+    /** Waiting for the owner to prove control of the supplied email. */
+    case PendingVerification = 'pending_verification';
+
     /** Provisioning is running, or queued to run. */
     case Preparing = 'preparing';
 

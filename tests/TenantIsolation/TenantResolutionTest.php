@@ -24,56 +24,56 @@ beforeEach(function (): void {
 });
 
 it('resolves a tenant from its registered host', function (): void {
-    $alpha = $this->provisionTenant('Alpha', ['alpha.metastyle.test']);
+    $alpha = $this->provisionTenant('Alpha', ['alpha.localhost']);
 
-    $this->get('http://alpha.metastyle.test/__test/whoami')
+    $this->get('http://alpha.localhost:8000/__test/whoami')
         ->assertOk()
         ->assertJsonPath('tenant', $alpha->id);
 });
 
 it('keeps two hosts pointing at their own tenants', function (): void {
-    $alpha = $this->provisionTenant('Alpha', ['alpha.metastyle.test']);
-    $beta = $this->provisionTenant('Beta', ['beta.metastyle.test']);
+    $alpha = $this->provisionTenant('Alpha', ['alpha.localhost']);
+    $beta = $this->provisionTenant('Beta', ['beta.localhost']);
 
-    $this->get('http://alpha.metastyle.test/__test/whoami')->assertJsonPath('tenant', $alpha->id);
-    $this->get('http://beta.metastyle.test/__test/whoami')->assertJsonPath('tenant', $beta->id);
+    $this->get('http://alpha.localhost:8000/__test/whoami')->assertJsonPath('tenant', $alpha->id);
+    $this->get('http://beta.localhost:8000/__test/whoami')->assertJsonPath('tenant', $beta->id);
 });
 
 it('fails for an unknown host instead of guessing', function (): void {
-    $this->provisionTenant('Alpha', ['alpha.metastyle.test']);
+    $this->provisionTenant('Alpha', ['alpha.localhost']);
 
     // 404, not 403: a more precise answer would confirm which hosts are
     // registered on the platform.
-    $this->getJson('http://unknown.metastyle.test/__test/whoami')
+    $this->getJson('http://unknown.localhost:8000/__test/whoami')
         ->assertNotFound()
         ->assertJsonPath('error.code', 'TENANT.NOT_RESOLVED');
 });
 
 it('leaves no tenant bound after an unresolved request', function (): void {
-    $this->getJson('http://unknown.metastyle.test/__test/whoami')->assertNotFound();
+    $this->getJson('http://unknown.localhost:8000/__test/whoami')->assertNotFound();
 
     expect(app(TenantContext::class)->isBound())->toBeFalse();
 });
 
 it('ignores a tenant id supplied by the client', function (): void {
-    $alpha = $this->provisionTenant('Alpha', ['alpha.metastyle.test']);
-    $beta = $this->provisionTenant('Beta', ['beta.metastyle.test']);
+    $alpha = $this->provisionTenant('Alpha', ['alpha.localhost']);
+    $beta = $this->provisionTenant('Beta', ['beta.localhost']);
 
     // Every shape a caller might try. None of them is a resolution source.
     $response = $this->withHeaders(['X-Tenant' => $beta->id, 'X-Tenant-Id' => $beta->id])
-        ->get('http://alpha.metastyle.test/__test/whoami?tenant_id='.$beta->id);
+        ->get('http://alpha.localhost:8000/__test/whoami?tenant_id='.$beta->id);
 
     $response->assertOk()->assertJsonPath('tenant', $alpha->id);
 });
 
 it('does not resolve a tenant that is not fully provisioned', function (): void {
-    $alpha = $this->provisionTenant('Alpha', ['alpha.metastyle.test']);
+    $alpha = $this->provisionTenant('Alpha', ['alpha.localhost']);
 
     $this->tenantModel($alpha)->forceFill(['provisioning_status' => 'failed'])->save();
 
     // A half-built tenant must not serve traffic. Failing here is far better
     // than a confusing connection error deeper in the request.
-    $this->getJson('http://alpha.metastyle.test/__test/whoami')->assertNotFound();
+    $this->getJson('http://alpha.localhost:8000/__test/whoami')->assertNotFound();
 });
 
 it('refuses to guess when two trusted sources disagree', function (): void {

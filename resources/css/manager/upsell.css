@@ -1,0 +1,74 @@
+/*
+ * Manager — locked plan features (x-manager.feature-locked). Shared by every
+ * area: the full-page upgrade state, the upgrade dialog and the compact
+ * read-only notice. Tokens only, logical properties only (RTL).
+ */
+.feature-locked-page { display: grid; place-items: start center; padding-block: var(--space-6); }
+
+.feature-lock { display: grid; gap: var(--space-5); width: min(100%, 56rem); padding: var(--space-6); border: 1px solid var(--color-border); border-radius: var(--radius-xl); background: var(--color-surface-elevated); box-shadow: var(--shadow-sm); }
+.feature-lock__header { display: flex; gap: var(--space-4); align-items: flex-start; }
+.feature-lock__header h2 { margin: 0; font-size: var(--text-2xl); }
+.feature-lock__icon { display: inline-grid; flex: none; place-items: center; width: 3rem; height: 3rem; border-radius: var(--radius-lg); background: var(--gradient-accent); color: var(--color-primary-text); }
+.feature-lock__summary { margin: var(--space-2) 0 0; max-width: 42rem; color: var(--color-text-muted); font-size: var(--text-md); line-height: 1.6; }
+
+.feature-lock__body { display: grid; gap: var(--space-5); grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); }
+.feature-lock__capabilities h3, .feature-lock__plans h3 { margin: 0 0 var(--space-3); font-size: var(--text-sm); color: var(--color-text-muted); font-weight: var(--weight-strong); }
+.feature-lock__capabilities ul { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.feature-lock__capabilities li { display: flex; gap: var(--space-2); align-items: flex-start; line-height: 1.5; }
+.feature-lock__capabilities li .ui-icon { flex: none; margin-block-start: .1rem; color: var(--color-success); }
+.feature-lock__requires { margin: var(--space-3) 0 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+
+.feature-lock__plans { display: grid; gap: var(--space-3); align-content: start; }
+.feature-lock__current { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: 0; padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-surface-muted); font-size: var(--text-sm); }
+.feature-lock__current > span:first-child { color: var(--color-text-muted); }
+.feature-lock__plans-head { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between; }
+.feature-lock__plans-head h3 { margin: 0; }
+.feature-lock__plan-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.feature-plan { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.feature-plan.is-featured { border-color: var(--color-primary-border); box-shadow: 0 0 0 1px var(--color-primary-border); }
+.feature-plan.is-current { opacity: .85; }
+.feature-plan__name { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.feature-plan__price { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; font-variant-numeric: tabular-nums; }
+.feature-plan__price span { font-size: var(--text-md); font-weight: var(--weight-strong); }
+.feature-plan__price small { color: var(--color-success); font-size: var(--text-xs); font-weight: var(--weight-strong); }
+.feature-plan__limits { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: 0; font-size: var(--text-xs); color: var(--color-text-muted); }
+.feature-plan__limits div { display: flex; gap: var(--space-1); }
+.feature-plan__limits dd { margin: 0; color: var(--color-text); font-weight: var(--weight-strong); }
+.feature-lock__note { margin: 0; color: var(--color-text-muted); line-height: 1.6; }
+
+.feature-lock__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: flex-end; padding-block-start: var(--space-4); border-block-start: 1px solid var(--color-border); }
+
+.feature-lock-notice { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; padding: var(--space-3) var(--space-4); border: 1px solid var(--color-primary-border); border-radius: var(--radius-md); background: var(--color-primary-soft); color: var(--color-text); }
+.feature-lock-notice > .ui-icon { flex: none; color: var(--color-primary-text); }
+.feature-lock-notice p { flex: 1 1 16rem; margin: 0; font-size: var(--text-sm); line-height: 1.5; }
+.feature-lock-notice__plan { display: inline-block; margin-inline-start: var(--space-2); color: var(--color-primary-text); font-weight: var(--weight-strong); }
+
+@media (max-width: 48rem) {
+    .feature-lock { padding: var(--space-4); }
+    .feature-lock__body { grid-template-columns: minmax(0, 1fr); }
+    .feature-lock__actions { justify-content: stretch; }
+    .feature-lock__actions > * { flex: 1 1 100%; justify-content: center; }
+}
+
+/*
+ * Info tooltip — shared by every Manager area for a note that is useful but
+ * not worth a paragraph: <span class="info-tip" role="img" tabindex="0"
+ * title="…" aria-label="…"><x-ui.icon name="info" size="16" /></span>.
+ * The mouse gets the native title; keyboard focus and touch get the same
+ * text in a bubble. Logical properties only (RTL).
+ */
+.info-tip { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; inline-size: 1.25rem; block-size: 1.25rem; border-radius: var(--radius-pill); color: var(--color-text-subtle); vertical-align: middle; cursor: help; }
+.info-tip:hover, .info-tip:focus-visible { color: var(--color-text); }
+.info-tip::after {
+    position: absolute; z-index: var(--z-dropdown); inset-block-start: calc(100% + .4rem); inset-inline-start: 0;
+    display: none; inline-size: max-content; max-inline-size: min(18rem, 80vw);
+    padding: .4rem .6rem; border-radius: var(--radius-xs);
+    background: var(--color-text); color: var(--color-canvas); box-shadow: var(--shadow-md);
+    content: attr(aria-label); font-size: var(--text-xs); font-weight: var(--weight-body); line-height: var(--leading-body); white-space: normal;
+    pointer-events: none;
+}
+.info-tip:focus-visible::after { display: block; }
+@media (hover: none) {
+    .info-tip { inline-size: 2.5rem; block-size: 2.5rem; margin: -.625rem; }
+    .info-tip:focus::after { display: block; }
+}

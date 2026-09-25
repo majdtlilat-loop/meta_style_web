@@ -16,8 +16,10 @@ use App\Kernel\Tenancy\Contracts\TenantContext;
 use App\Kernel\Tenancy\Contracts\TenantResolver;
 use App\Kernel\Tenancy\Exceptions\TenantNotResolved;
 use App\Kernel\Tenancy\Exceptions\TenantResolutionConflict;
+use App\Kernel\Tenancy\PlatformHosts;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Routing\UrlGenerator;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -40,6 +42,8 @@ final class ResolveTenant
         private readonly TenantResolver $resolver,
         private readonly TenantContext $context,
         private readonly Audit $audit,
+        private readonly PlatformHosts $hosts,
+        private readonly UrlGenerator $urls,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -62,6 +66,11 @@ final class ResolveTenant
         }
 
         $this->normaliseApiToken($request);
+
+        $slug = $this->hosts->centerSlugFromHost($request->getHost());
+        if ($slug !== null) {
+            $this->urls->defaults(['center' => $slug]);
+        }
 
         return $this->context->run($tenant, function () use ($next, $request, $source): Response {
             $request->attributes->set('tenant_resolution_source', $source);

@@ -172,6 +172,31 @@ user initiated, 7 days for a customer-facing invoice link.
 Never place a customer identifier, invoice number, or phone number in a media
 URL (`08` §14).
 
+**Public collections on a center (ADR-083).** A center's `public` disk is rooted
+at `tenants/{key}/app/public`, which the global `/storage` link cannot reach.
+On the center's own host, `MediaItem::url()` therefore returns
+`https://{center-host}/media/{collection}/{uuid}.{ext}`, served by
+`CenterMediaController` inside the resolved center: only `branding` and
+`catalog`, only MediaStore-shaped names and allow-listed extensions, each with
+its fixed content type, `nosniff`, a sandboxing CSP and an immutable cache
+header (`throttle:public-media`). Another center's host resolves another disk
+and finds nothing. Livewire's temporary upload and preview endpoints resolve
+the center too, so a temporary file is written to and read from the center's
+own disk.
+
+Two runtime prerequisites make that work in a browser, and neither is visible
+to `Livewire::test()` (ADR-105):
+
+- **The resolver runs before the upload throttle.** The upload endpoint carries
+  `throttle:60,1`, which keys on the signed-in user — a tenant-database row.
+  `ResolveLivewireTenant` is in the middleware priority list with the other
+  resolvers, and `MiddlewareOrderGuard` fails the boot otherwise.
+- **The suffixed storage path has `framework/cache`.** `storage_path()` becomes
+  `tenants/{key}/` inside a center, and Laravel writes a real-time facade's stub
+  there on first use (Livewire's uploads use one). `TenantStorageBootstrapper`
+  creates the directory on every tenancy bootstrap — cheap once it exists, and
+  correct for centers that predate it and for a freshly started server.
+
 ## 8. Invoice and document immutability
 
 A published invoice PDF is written **once** and never regenerated. Re-rendering
@@ -228,7 +253,9 @@ media_items   uuid, owner_type, owner_id, collection, path,
 ```
 
 **`owner_type` is a short stable string** — `branch`, `department`,
-`service_category`, `service` — from `Kernel\Media\MediaOwner`, not a model
+`service_category`, `service`, `brand`, `site`, `queue_display` (a waiting-room
+screen's promotional images and videos, public `branding` collection, 12 per
+screen — docs/17-QUEUE.md §9) — from `Kernel\Media\MediaOwner`, not a model
 class name. Laravel's default morph column stores the FQCN, so moving a class
 between namespaces silently orphans every row pointing at it: an ordinary
 refactor becomes a data migration across every tenant database.

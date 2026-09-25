@@ -164,6 +164,28 @@ created together by one Action.
 A block never cancels or moves an appointment. Creating one returns the bookings
 already inside it so the person who made it can see what they have done.
 
+### 8.1 Manager UI and scope (Phase 15)
+
+The Manager edits blocks in two places with ONE component
+(`Livewire\Center\Resources\AvailabilityBlocks`): the Resources page's "Time
+off" tab (every upcoming block in the viewer's branches) and a staff profile's
+"Time off" tab (that person only). Times are typed and shown in the BRANCH's
+wall clock (`BranchClock::toLocal` on display, `BranchClock::toUtc` inside the
+Action) — the old table printed UTC. The branch picker offers only live
+branches in the viewer's scope where the person works; the person picker only
+active staff. The affected-bookings list is shown only to `appointment.view`
+holders, the same gate the API applies.
+
+**The record's own branch is authorised, not only the target.**
+`SaveAvailabilityBlock` update/delete and `SaveResource` update/archive/restore
+now refuse when the EXISTING block or resource stands in a branch outside the
+actor's scope. The API compensated in its controllers; the Livewire screens
+called the Actions directly, so a scoped manager could re-point another
+branch's block or machine into their own. `SaveResource::restore()` and
+`SaveResourceType::restore()` undo an archive (under the branch lock; a
+resource of a retired type cannot return). Editing a resource now round-trips
+its active flag and sort order instead of forcing `is_active = true`.
+
 ## 9. Layouts: sequential, gapped, parallel
 
 `Scheduler` lays a visit out. A line may declare `offsetMinutes` — where it
@@ -446,6 +468,16 @@ nothing distinguishes is a promise rather than a permission.
 booking, and a center that owns one owns the other. No new entitlement, no plan
 names.
 
+> **Deferred packaging decision.** `booking` is being reused as the commercial
+> capability that enables the Journey workflow, walk-ins included — so a
+> walk-in-only center could not be sold Journey without it. Nothing is blocked
+> by this: every sellable plan includes `booking` today. The DOMAIN separation is
+> untouched — `appointment_id` is nullable and no walk-in ever invents an
+> appointment — and what is deferred is only which key sells the operational
+> board. Audited and scoped in `docs/13-ROADMAP.md`, "Deferred
+> packaging/entitlement decision"; revisit before offering a sellable
+> walk-in-only configuration.
+
 ## 19. Audit
 
 ```
@@ -476,7 +508,37 @@ operational source of truth: resource-use history lives in
   query, and every availability block in one more. Neither count grows with the
   number of bookings; regression tests hold both.
 - The board loads appointments and journeys in two queries, with stages,
-  employees, departments and resources eager-loaded.
+  their booked items (`stages.item.employee`), employees, departments and
+  resources eager-loaded. The visit drawer loads handoffs with their stages and
+  people, and notes with their authors, so no screen lazy-loads per row.
+
+### The Manager board (Phase 15)
+
+`{center}.…/manager/board` (`App\Livewire\Center\JourneyBoard`): five lanes —
+Not arrived · Waiting · In service · Completed · Left — built from
+`JourneyBoardView` cards (branch-local times, late / waiting minutes, the
+service in progress with elapsed vs expected, the next service, progress). The
+stage figures double as a lane filter. `wire:poll.15s.visible` for today.
+
+- **Finished visits stay on their day.** `JourneyBoardQuery::forDay()` now
+  includes the day's appointments that HAVE a journey whatever the appointment
+  status (completed, cancelled), not only `booked`/`confirmed`; a booking
+  cancelled before anybody arrived still leaves the board. The API board payload
+  changes the same way.
+- Every card is presenter data; walk-in rows (no appointment) render like any
+  other — the old view crashed on them.
+- One-press: check in, start the next service, finish the current one; the
+  drawer (`Journey\VisitPanel`) adds skip (a reason is required), hand on
+  (`journey.stage.reassign` + complete), reassign (only active, qualified people
+  at the branch), swap a room (same kind, bookable at the branch), notes with
+  visibility (team / managers only) and delete, hand-off history, give a queue
+  number (`IssueTicket`, with `queue_management`), complete visit, customer left
+  (`AbortJourney`), cancel booking (`CancelVisit`), and a LINK to the till.
+- Choices come from `VisitOptions`; every uuid is re-resolved by
+  `JourneyBoardQuery::find()` / `stage()` (branch + own scope).
+- Walk-ins use the shared walk-in drawer: `CreateWalkInVisit` without the queue.
+- **Locked:** without `booking` the board is the upgrade offer when the center
+  has no visits or bookings; otherwise read-only with a compact notice.
 - The Actions call `loadMissing()` rather than trusting the caller — an Action
   that assumes its caller eager-loaded is one query per row the first time
   somebody calls it from a loop.

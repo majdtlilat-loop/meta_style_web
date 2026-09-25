@@ -11,17 +11,43 @@ use App\Kernel\Tenancy\Exceptions\InvalidTenantDatabaseName;
  *
  * SQL cannot bind a database identifier as a parameter — `CREATE DATABASE ?`
  * does not exist — so every name reaching a DDL statement is interpolated. The
- * defence is that names are *generated*, never accepted: derived from the
- * internal auto-increment sequence, never from a center's name, a request
- * field, or anything a user can influence (ADR-024).
+ * defence is that names are *generated*, never accepted (ADR-024), and that a
+ * name reads to an operator as the center it belongs to (ADR-106):
  *
- *     sequence 1     → tenant_000001
- *     sequence 1234  → tenant_001234
- *     sequence 10^7  → tenant_10000000   (widens past six digits, still safe)
+ *     slug "drbany",           sequence 3    → tenant_drbany_000003
+ *     slug "barbershop-alpha", sequence 4    → tenant_barbershop_alpha_000004
+ *     slug "qa-test-center",   sequence 5    → tenant_qa_test_center_000005
+ *
+ * The LABEL is the center's slug reduced to a closed alphabet — lowercase
+ * ASCII letters, digits and single underscores — and bounded, so whatever the
+ * slug carried (a quote, a dot, a slash, a wildcard, Arabic) cannot reach SQL.
+ * The SUFFIX is the internal auto-increment sequence, which alone makes the
+ * name unique: two centers whose slugs reduce to the same label still get two
+ * databases. The label is cut to fit, the suffix never is.
+ *
+ * A name is generated ONCE, at provisioning, and stored on the control-plane
+ * tenant row; everything after reads the stored name. A center that is later
+ * renamed, or moved to another address, keeps its database — nothing here is
+ * ever re-derived from the center's current slug.
+ *
+ * Databases provisioned before ADR-106 are named `tenant_000003`, with no
+ * label, and remain valid.
  */
 final class TenantDatabaseName
 {
     public const DEFAULT_PREFIX = 'tenant_';
+
+    /** MySQL's and MariaDB's limit for a database identifier. */
+    public const MAX_LENGTH = 64;
+
+    /** The longest label a name may carry, whatever the slug. */
+    public const MAX_SLUG_LENGTH = 24;
+
+    /** The label of a center whose slug has nothing ASCII left in it. */
+    public const FALLBACK_LABEL = 'center';
+
+    /** Twelve digits: the widest suffix the identifier limit leaves room for. */
+    private const MAX_SEQUENCE = 999_999_999_999;
 
     /**
      * The configured prefix, validated before it can reach SQL.
@@ -33,30 +59,61 @@ final class TenantDatabaseName
     {
         $prefix = (string) config('metastyle.tenancy.database_prefix', self::DEFAULT_PREFIX);
 
-        if (preg_match('/^[a-z][a-z0-9_]{0,32}$/', $prefix) !== 1) {
+        // `D`: without it `$` also matches before a final newline, and
+        // "tenant_\n" would pass.
+        if (preg_match('/^[a-z][a-z0-9_]{0,32}$/D', $prefix) !== 1) {
             throw InvalidTenantDatabaseName::for($prefix);
         }
 
         return $prefix;
     }
 
-    public static function forSequence(int $sequence): string
+    /**
+     * The database name for a NEW center: its slug as a label, its sequence as
+     * the suffix that makes it unique.
+     *
+     * The slug is untrusted even after the platform normalised it: this is
+     * the last step before an identifier.
+     */
+    public static function generate(int $sequence, ?string $slug): string
     {
-        if ($sequence < 1) {
-            throw new InvalidTenantDatabaseName("Tenant sequence must be positive, got [{$sequence}].");
+        if ($sequence < 1 || $sequence > self::MAX_SEQUENCE) {
+            throw new InvalidTenantDatabaseName("Tenant sequence out of range, got [{$sequence}].");
         }
 
-        return self::prefix().str_pad((string) $sequence, 6, '0', STR_PAD_LEFT);
+        $prefix = self::prefix();
+        $suffix = str_pad((string) $sequence, 6, '0', STR_PAD_LEFT);
+
+        // The label gives way to the prefix and the suffix, never the reverse.
+        // Under the production prefix it is MAX_SLUG_LENGTH; only a long
+        // configured prefix (the test suite's) shortens it further.
+        $budget = min(self::MAX_SLUG_LENGTH, self::MAX_LENGTH - strlen($prefix) - 1 - strlen($suffix));
+
+        return self::assertValid($prefix.self::label($slug, $budget).'_'.$suffix);
     }
 
     public static function isValid(string $name): bool
     {
-        return preg_match('/^'.preg_quote(self::prefix(), '/').'[0-9]{6,12}$/', $name) === 1;
+        if (strlen($name) > self::MAX_LENGTH) {
+            return false;
+        }
+
+        // `tenant_{label}_{sequence}`, or the pre-ADR-106 `tenant_{sequence}`.
+        // `D` ends the match at the true end: "tenant_000001\n" is not a name.
+        $pattern = '/^'.preg_quote(self::prefix(), '/').'(?:(?<label>[a-z0-9]+(?:_[a-z0-9]+)*)_)?[0-9]{6,12}$/D';
+
+        if (preg_match($pattern, $name, $match) !== 1) {
+            return false;
+        }
+
+        return strlen($match['label'] ?? '') <= self::MAX_SLUG_LENGTH;
     }
 
     /**
-     * Gate for every DDL path. Anything that creates, drops, or connects to a
-     * tenant database calls this first.
+     * Gate for every DDL path: anything that creates, drops, migrates or
+     * reports on a tenant database calls this first. Runtime connection
+     * switching binds the STORED name, which only provisioning writes
+     * (ADR-106).
      *
      * @throws InvalidTenantDatabaseName
      */
@@ -67,5 +124,18 @@ final class TenantDatabaseName
         }
 
         return $name;
+    }
+
+    /**
+     * The slug reduced to `[a-z0-9]` runs joined by single underscores, cut to
+     * the budget, and never empty. Byte-wise on purpose: nothing outside ASCII
+     * survives, so no identifier ever depends on how a server treats Unicode.
+     */
+    private static function label(?string $slug, int $budget): string
+    {
+        $label = trim((string) preg_replace('/[^a-z0-9]+/', '_', strtolower((string) $slug)), '_');
+        $label = rtrim(substr($label, 0, $budget), '_');
+
+        return $label === '' ? self::FALLBACK_LABEL : $label;
     }
 }

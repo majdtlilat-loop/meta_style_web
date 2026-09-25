@@ -10,10 +10,16 @@ use App\Kernel\Time\BranchClock;
 use App\Modules\Booking\Application\AppointmentScopeResolver;
 use App\Modules\Branches\Domain\Models\Branch;
 use App\Modules\Queue\Domain\Enums\TicketState;
+use App\Modules\Queue\Domain\Models\QueueServicePoint;
 use App\Modules\Queue\Domain\Models\QueueTicket;
+use App\Modules\ServiceJourney\Domain\Enums\JourneyStatus;
+use App\Modules\ServiceJourney\Domain\Enums\StageStatus;
+use App\Modules\ServiceJourney\Domain\Models\JourneyStage;
+use App\Modules\ServiceJourney\Domain\Models\ServiceJourney;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -80,6 +86,9 @@ final class QueueBoardQuery
                 'journey.customer',
                 'journey.appointment.customer',
                 'stage.employee',
+                // A booked stage reads its service name from the item snapshot
+                // (`serviceName()`); lazy, that is a query per ticket.
+                'stage.item',
                 'department',
                 'servicePoint',
             ])
@@ -106,6 +115,172 @@ final class QueueBoardQuery
     }
 
     /**
+     * One ticket by uuid, after the same checks the board makes.
+     *
+     * The ONE way a staff screen turns a uuid it was sent into a ticket: queue
+     * view, branch scope and — for a view-own employee — their own stage. A
+     * crafted request for another branch's ticket reads as not found.
+     *
+     * @throws AuthorizationException
+     * @throws ModelNotFoundException<QueueTicket>
+     */
+    public function find(User $viewer, string $uuid, bool $withHistory = false): QueueTicket
+    {
+        if (! $viewer->hasPermission(Permission::QueueView)) {
+            throw new AuthorizationException('You may not view the queue.');
+        }
+
+        $scope = $this->scopes->forJourneyViewer($viewer);
+
+        if ($scope->isDenied()) {
+            throw new AuthorizationException('You may not view the queue.');
+        }
+
+        $query = QueueTicket::query()
+            ->with([
+                'journey.customer',
+                'journey.appointment.customer',
+                'stage.employee',
+                'stage.item',
+                'department',
+                'servicePoint',
+                'branch',
+            ])
+            ->where('uuid', $uuid);
+
+        if ($withHistory) {
+            $query->with('events.servicePoint');
+        }
+
+        $ticket = $query->first();
+
+        if (! $ticket instanceof QueueTicket || ! $viewer->canAccessBranch((int) $ticket->branch_id)) {
+            throw (new ModelNotFoundException)->setModel(QueueTicket::class, [$uuid]);
+        }
+
+        if ($scope->isLimitedToOwn() && (int) ($ticket->stage->employee_id ?? 0) !== (int) $scope->employeeId) {
+            throw (new ModelNotFoundException)->setModel(QueueTicket::class, [$uuid]);
+        }
+
+        return $ticket;
+    }
+
+    /**
+     * Checked-in visits with nothing to call them by.
+     *
+     * A booked customer checked in on the visit board has a journey and a
+     * waiting stage but no number — the queue only ticketed walk-ins it created
+     * itself. This is the host's "arrived, no number yet" list, so issuing one
+     * is a single press (docs/17-QUEUE.md §24: a ticket for the stage the
+     * workflow has reached, never one per service at the door).
+     *
+     * Only visits that arrived in the branch-local day, are still active,
+     * have a waiting stage and nothing in service, and hold no open ticket.
+     * Empty for a viewer who could not issue one anyway.
+     *
+     * @param  array{branch?: string|null}  $filters
+     * @return list<array{journey: ServiceJourney, stage: JourneyStage}>
+     *
+     * @throws AuthorizationException
+     */
+    public function awaitingNumber(User $viewer, ?string $date = null, array $filters = []): array
+    {
+        if (! $viewer->hasPermission(Permission::QueueManage)) {
+            return [];
+        }
+
+        $branches = $this->branchesInScope($viewer, $filters['branch'] ?? null);
+
+        if ($branches->isEmpty()) {
+            return [];
+        }
+
+        $ids = $branches->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
+        [$from, $to] = $this->dayWindow($branches, $date);
+
+        $journeys = ServiceJourney::query()
+            ->with(['customer', 'appointment.customer', 'stages.item', 'stages.employee', 'stages.department'])
+            ->where('status', JourneyStatus::Active->value)
+            ->where('arrived_at', '>=', $from)
+            ->where('arrived_at', '<', $to)
+            ->where(function (Builder $branch) use ($ids): void {
+                // A walk-in carries its branch; a booked visit reads it from
+                // the appointment (docs/16 §22).
+                $branch->whereIn('branch_id', $ids)
+                    ->orWhereHas('appointment', fn (Builder $a) => $a->whereIn('branch_id', $ids));
+            })
+            ->whereHas('stages', fn (Builder $s) => $s->where('status', StageStatus::Waiting->value))
+            ->whereDoesntHave('stages', fn (Builder $s) => $s->where('status', StageStatus::InService->value))
+            ->whereNotExists(function ($open): void {
+                $open->selectRaw('1')
+                    ->from('queue_tickets')
+                    ->whereColumn('queue_tickets.service_journey_id', 'service_journeys.id')
+                    ->whereIn('queue_tickets.state', TicketState::openValues());
+            })
+            ->orderBy('arrived_at')
+            ->orderBy('id')
+            ->limit(50)
+            ->get();
+
+        $rows = [];
+
+        foreach ($journeys as $journey) {
+            $stage = $journey->stages->first(static fn (JourneyStage $s): bool => $s->status === StageStatus::Waiting);
+
+            if ($stage instanceof JourneyStage) {
+                $rows[] = ['journey' => $journey, 'stage' => $stage];
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Destinations a desk can call to, in the viewer's branches.
+     *
+     * @return list<QueueServicePoint>
+     *
+     * @throws AuthorizationException
+     */
+    public function servicePoints(User $viewer, ?string $branchUuid = null): array
+    {
+        $branches = $this->branchesInScope($viewer, $branchUuid);
+
+        /** @var list<QueueServicePoint> $points */
+        $points = QueueServicePoint::query()
+            ->usable()
+            ->whereIn('branch_id', $branches->pluck('id')->all())
+            ->orderBy('branch_id')
+            ->orderBy('sort_order')
+            ->orderBy('display_code')
+            ->get()
+            ->all();
+
+        return $points;
+    }
+
+    /**
+     * The first branch the viewer works in, for a screen with nothing chosen.
+     */
+    public function defaultBranch(User $viewer): ?Branch
+    {
+        $query = Branch::query()->active()->orderByDesc('is_main')->orderBy('id');
+
+        $viewer->branchScope()->applyTo($query, 'id');
+
+        return $query->first();
+    }
+
+    /**
+     * Has this center ever issued a ticket? Decides whether a center that lost
+     * the queue sees its read-only history or the upgrade page.
+     */
+    public function hasHistory(): bool
+    {
+        return QueueTicket::query()->exists();
+    }
+
+    /**
      * The next ticket a desk should call, if there is one.
      *
      * The SAME ordering the board renders — `priority DESC, issued_at ASC,
@@ -117,7 +292,7 @@ final class QueueBoardQuery
     public function nextToCall(Branch $branch, ?string $date = null, array $filters = []): ?QueueTicket
     {
         $query = QueueTicket::query()
-            ->with(['journey.customer', 'journey.appointment.customer', 'department', 'servicePoint'])
+            ->with(['journey.customer', 'journey.appointment.customer', 'stage.employee', 'stage.item', 'department', 'servicePoint'])
             ->where('branch_id', $branch->getKey())
             ->where('business_date', BranchClock::localDate(
                 $date === null ? CarbonImmutable::now()->utc() : CarbonImmutable::parse($date.' 12:00', $branch->timezone)->utc(),
@@ -198,6 +373,29 @@ final class QueueBoardQuery
         }
 
         return array_values(array_unique($dates));
+    }
+
+    /**
+     * The UTC window covering one branch-local day across the given branches —
+     * the widest one, like the visit board's.
+     *
+     * @param  Collection<int, Branch>  $branches
+     * @return array{0: CarbonImmutable, 1: CarbonImmutable}
+     */
+    private function dayWindow(Collection $branches, ?string $date): array
+    {
+        $starts = [];
+        $ends = [];
+        $now = CarbonImmutable::now()->utc();
+
+        foreach ($branches as $branch) {
+            $local = $date ?? BranchClock::localDate($now, $branch->timezone);
+
+            $starts[] = BranchClock::toUtcOrShift($local, 0, $branch->timezone);
+            $ends[] = BranchClock::toUtcOrShift($local, 24 * 60, $branch->timezone);
+        }
+
+        return [min($starts), max($ends)];
     }
 
     /**

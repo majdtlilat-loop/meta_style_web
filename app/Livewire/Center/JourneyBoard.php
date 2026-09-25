@@ -6,59 +6,53 @@ namespace App\Livewire\Center;
 
 use App\Kernel\Authorization\Permission;
 use App\Kernel\Entitlements\Entitlements;
-use App\Kernel\Identity\Models\User;
-use App\Kernel\Notes\NoteAdvisory;
-use App\Kernel\Notes\NoteVisibility;
-use App\Modules\Booking\Domain\Models\Appointment;
-use App\Modules\Branches\Domain\Models\Branch;
-use App\Modules\Departments\Domain\Models\Department;
-use App\Modules\Employees\Domain\Models\Employee;
-use App\Modules\ServiceJourney\Application\Actions\AbortJourney;
+use App\Kernel\Time\BranchClock;
+use App\Livewire\Center\Concerns\RequiresFeature;
+use App\Livewire\Center\Queue\Concerns\RunsDeskActions;
+use App\Livewire\Center\Queue\OperationalFailure;
 use App\Modules\ServiceJourney\Application\Actions\CheckInAppointment;
-use App\Modules\ServiceJourney\Application\Actions\CompleteJourney;
-use App\Modules\ServiceJourney\Application\Actions\HandoffStage;
-use App\Modules\ServiceJourney\Application\Actions\ManageStageNotes;
-use App\Modules\ServiceJourney\Application\Actions\ReassignStageEmployee;
-use App\Modules\ServiceJourney\Application\Actions\SwapStageResource;
 use App\Modules\ServiceJourney\Application\Actions\TransitionStage;
-use App\Modules\ServiceJourney\Application\BoardRow;
 use App\Modules\ServiceJourney\Application\JourneyBoardQuery;
+use App\Modules\ServiceJourney\Application\JourneyBoardView;
+use App\Modules\ServiceJourney\Application\VisitOptions;
 use App\Modules\ServiceJourney\Domain\Enums\StageStatus;
-use App\Modules\ServiceJourney\Domain\Exceptions\JourneyFailed;
-use App\Modules\ServiceJourney\Domain\Models\JourneyStage;
-use App\Modules\ServiceJourney\Domain\Models\ServiceJourney;
+use App\View\Manager\FeatureOffer;
+use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Contracts\View\View;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\On;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 
 /**
- * Today's floor.
+ * Today's floor: who is expected, who is here, who is in a chair, who is done.
  *
- * ## Not the queue display
+ * ## Not the queue
  *
- * A staff working board — who is expected, who is here, who is being served,
- * who is finished. No ticket numbers, no calling, no TV output, no
- * announcements. Phase 8 builds the queue on top of these tables
- * (docs/13-ROADMAP.md Phase 7 §§32, 33, 44).
- *
- * ## Refreshed by asking, not by pushing
- *
- * No WebSockets, no Reverb, no broadcasting. A `wire:poll` and a refresh button
- * are enough for a board a host glances at, and real-time infrastructure would
- * be a production dependency added for a requirement nobody has stated yet
- * (§38).
+ * A staff working board — no numbers, no calling, no television. The queue is
+ * built on top of these tables and has its own screen (docs/16, docs/17).
  *
  * ## Nothing here decides anything
  *
- * Every button calls the Action the API calls. The transitions, the resource
- * holds, the branch scope and the audit entries live there, so the board and
- * the API can never drift apart (docs/04-MODULE-BOUNDARIES.md).
+ * Every button calls the Action the API calls (CheckInAppointment,
+ * TransitionStage, …); the transitions, resource holds, branch scope and audit
+ * entries live there. Which buttons a card shows is `JourneyBoardView`'s
+ * answer. The visit drawer and the walk-in form are child components, so the
+ * board's poll never wipes a note or a reason being typed.
+ *
+ * ## Locked
+ *
+ * Journey is the operational half of `booking`. Without it the board is the
+ * upgrade offer — unless the center has visits already, which stay readable
+ * with every action hidden.
  */
 #[Layout('components.layouts.app')]
 final class JourneyBoard extends Component
 {
+    use RequiresFeature;
+    use RunsDeskActions;
+
     #[Url]
     public string $date = '';
 
@@ -74,317 +68,145 @@ final class JourneyBoard extends Component
     #[Url]
     public string $group = '';
 
-    /** The visit whose detail panel is open. */
-    public string $openJourney = '';
+    /**
+     * The lane a phone shows, and whether its filters are open. Server state on
+     * purpose: a client-side toggle would be snapped back by the poll.
+     */
+    public string $lane = 'waiting';
 
-    public string $noteBody = '';
-
-    public string $noteStage = '';
-
-    public string $reassignStage = '';
-
-    public string $reassignEmployee = '';
-
-    public string $swapStage = '';
-
-    public string $swapFrom = '';
-
-    public string $swapTo = '';
-
-    public string $abortReason = '';
-
-    public ?string $error = null;
-
-    public ?string $saved = null;
+    public bool $filtersOpen = false;
 
     public function mount(): void
     {
-        if (! $this->user()->hasPermission(Permission::JourneyView)
-            && ! $this->user()->hasPermission(Permission::JourneyViewOwn)) {
+        if (! $this->viewer()->hasPermission(Permission::JourneyView)
+            && ! $this->viewer()->hasPermission(Permission::JourneyViewOwn)) {
             throw new AuthorizationException('You may not view the visit board.');
         }
+
+        $branches = app(VisitOptions::class)->branches($this->viewer());
+
+        if ($this->branch === '' && count($branches) === 1) {
+            $this->branch = $branches[0]['uuid'];
+        }
     }
 
-    public function checkIn(string $appointmentUuid, CheckInAppointment $checkIn): void
+    public function updatedBranch(): void
     {
-        $this->run(function () use ($appointmentUuid, $checkIn): void {
-            $appointment = $this->appointment($appointmentUuid);
+        $this->employee = '';
+    }
 
-            if ($appointment === null) {
-                return;
-            }
+    public function checkIn(string $appointmentUuid, JourneyBoardQuery $board, CheckInAppointment $checkIn): void
+    {
+        $this->attempt(function () use ($appointmentUuid, $board, $checkIn): void {
+            $journey = $checkIn($board->appointment($this->viewer(), $appointmentUuid), $this->viewer());
 
-            $journey = $checkIn($appointment, $this->user());
-
-            $this->openJourney = $journey->uuid;
-            $this->saved = __('Customer checked in.');
+            $this->succeeded(__('manager_visits.notices.checked_in'));
+            $this->openVisit($journey->uuid);
         });
     }
 
-    public function startStage(string $uuid, TransitionStage $transition): void
+    public function start(string $stageUuid, JourneyBoardQuery $board, TransitionStage $transition): void
     {
-        $this->transition($uuid, StageStatus::InService, $transition);
-    }
+        $this->attempt(function () use ($stageUuid, $board, $transition): void {
+            $transition($board->stage($this->viewer(), $stageUuid), StageStatus::InService, $this->viewer());
 
-    public function completeStage(string $uuid, TransitionStage $transition): void
-    {
-        $this->transition($uuid, StageStatus::Completed, $transition);
-    }
-
-    public function skipStage(string $uuid, string $reason, TransitionStage $transition): void
-    {
-        $this->transition($uuid, StageStatus::Skipped, $transition, $reason);
-    }
-
-    public function reassign(ReassignStageEmployee $reassign): void
-    {
-        $this->run(function () use ($reassign): void {
-            $stage = $this->stage($this->reassignStage);
-
-            if ($stage === null) {
-                return;
-            }
-
-            $reassign($stage, $this->reassignEmployee, $this->user());
-
-            $this->reset(['reassignStage', 'reassignEmployee']);
-            $this->saved = __('Reassigned. The booking still records who was originally booked.');
+            $this->succeeded(__('manager_visits.notices.started'));
         });
     }
 
-    public function swapResource(SwapStageResource $swap): void
+    public function finish(string $stageUuid, JourneyBoardQuery $board, TransitionStage $transition): void
     {
-        $this->run(function () use ($swap): void {
-            $stage = $this->stage($this->swapStage);
+        $this->attempt(function () use ($stageUuid, $board, $transition): void {
+            $transition($board->stage($this->viewer(), $stageUuid), StageStatus::Completed, $this->viewer());
 
-            if ($stage === null) {
-                return;
-            }
-
-            $swap($stage, $this->swapFrom, $this->swapTo, $this->user());
-
-            $this->reset(['swapStage', 'swapFrom', 'swapTo']);
-            $this->saved = __('Resource swapped. The previous one is kept in the history.');
+            $this->succeeded(__('manager_visits.notices.finished'));
         });
     }
 
-    public function handoff(string $uuid, HandoffStage $handoff): void
+    public function openVisit(string $journeyUuid): void
     {
-        $this->run(function () use ($uuid, $handoff): void {
-            $stage = $this->stage($uuid);
-
-            if ($stage === null) {
-                return;
-            }
-
-            $handoff($stage, $this->user());
-
-            $this->saved = __('Customer handed on.');
-        });
+        $this->dispatch('open-visit', uuid: $journeyUuid)->to(Journey\VisitPanel::class);
     }
 
-    public function addNote(ManageStageNotes $notes): void
+    public function openWalkIn(): void
     {
-        $this->run(function () use ($notes): void {
-            $stage = $this->stage($this->noteStage);
-
-            if ($stage === null) {
-                return;
-            }
-
-            $notes->add($stage, $this->noteBody, $this->user(), NoteVisibility::Internal);
-
-            $this->reset(['noteStage', 'noteBody']);
-            $this->saved = __('Note added.');
-        });
+        $this->dispatch('open-walk-in', branch: $this->branch, mode: 'visit')->to(Queue\WalkInForm::class);
     }
 
-    public function completeJourney(string $uuid, CompleteJourney $complete): void
+    #[On('walk-in-created')]
+    public function walkInCreated(?string $journey = null, ?string $number = null): void
     {
-        $this->run(function () use ($uuid, $complete): void {
-            $journey = $this->journey($uuid);
+        $this->succeeded($number !== null
+            ? __('manager_visits.notices.walk_in_ticket', ['number' => $number])
+            : __('manager_visits.notices.walk_in'));
 
-            if ($journey === null) {
-                return;
-            }
-
-            $complete($journey, $this->user());
-
-            $this->openJourney = '';
-            $this->saved = __('Visit completed.');
-        });
+        if ($journey !== null) {
+            $this->openVisit($journey);
+        }
     }
 
-    public function abortJourney(string $uuid, AbortJourney $abort): void
+    #[On('visit-changed')]
+    public function visitChanged(string $message = ''): void
     {
-        $this->run(function () use ($uuid, $abort): void {
-            $journey = $this->journey($uuid);
-
-            if ($journey === null) {
-                return;
-            }
-
-            $abort($journey, $this->user(), $this->abortReason === '' ? null : $this->abortReason);
-
-            $this->reset(['abortReason']);
-            $this->openJourney = '';
-            $this->saved = __('Visit marked as abandoned. The appointment itself was not changed.');
-        });
+        if ($message !== '') {
+            $this->succeeded($message);
+        }
     }
 
-    public function render(JourneyBoardQuery $board, Entitlements $entitlements): mixed
+    public function clearFilters(): void
     {
-        $user = $this->user();
+        $this->reset(['date', 'department', 'employee', 'group']);
+    }
 
-        /** @var array{branch?: string|null, department?: string|null, employee?: string|null, group?: string|null} $filters */
-        $filters = [
-            'branch' => $this->branch === '' ? null : $this->branch,
-            'department' => $this->department === '' ? null : $this->department,
-            'employee' => $this->employee === '' ? null : $this->employee,
-            'group' => $this->group === '' ? null : $this->group,
-        ];
+    public function render(JourneyBoardQuery $board, JourneyBoardView $view, VisitOptions $options, Entitlements $entitlements): View
+    {
+        $viewer = $this->viewer();
+        $entitled = $entitlements->enabled('booking');
 
-        try {
-            $rows = $board->forDay($user, $this->date === '' ? null : $this->date, $filters);
-        } catch (AuthorizationException $e) {
-            $this->error = $e->getMessage();
-            $rows = [];
+        if (! $entitled && ! $board->hasHistory() && ($locked = $this->lockedView('booking'))) {
+            return $locked;
         }
 
-        $branchQuery = Branch::query()->active();
-        $user->branchScope()->applyTo($branchQuery, 'id');
+        $rows = [];
+        $date = $this->date === '' ? null : $this->date;
+
+        try {
+            $rows = $board->forDay($viewer, $date, array_filter([
+                'branch' => $this->branch,
+                'department' => $this->department,
+                'employee' => $this->employee,
+            ]));
+        } catch (AuthorizationException $failure) {
+            $this->succeeded(OperationalFailure::message($failure), 'danger');
+        }
+
+        $cards = $view->cards($rows, $viewer, $entitled);
+        $counts = $view->counts($cards);
+        $lanes = $view->lanes($cards);
+
+        if ($this->group !== '' && isset($lanes[$this->group])) {
+            $lanes = [$this->group => $lanes[$this->group]];
+        }
+
+        $branch = $options->branch($viewer, $this->branch);
+        $home = $branch ?? $options->branch($viewer, $options->branches($viewer)[0]['uuid'] ?? '');
+        $today = $home === null ? null : BranchClock::localDate(CarbonImmutable::now()->utc(), $home->timezone);
+        $isToday = $date === null || $date === $today;
 
         return view('livewire.center.journeyBoard', [
-            'rows' => $rows,
-            'grouped' => $this->group($rows),
-            'openRow' => $this->openRow($rows),
-            'branches' => $branchQuery->get(),
-            'departments' => Department::query()->active()->get(),
-            'employees' => Employee::query()->orderBy('id')->get(),
-            'noteAdvisory' => NoteAdvisory::text(),
-            'canManage' => $user->hasPermission(Permission::JourneyManage),
-            'canStart' => $user->hasPermission(Permission::JourneyStageStart),
-            'canComplete' => $user->hasPermission(Permission::JourneyStageComplete),
-            'canReassign' => $user->hasPermission(Permission::JourneyStageReassign),
-            'canNote' => $user->hasPermission(Permission::JourneyNoteManage),
-            // Only a flag for a link: the till enforces `pos` and `sale.create`
-            // itself, and this board never calls Sales (docs/18-SALES.md §33).
-            'canCheckout' => $user->hasPermission(Permission::SaleCreate) && $entitlements->enabled('pos'),
+            'readOnly' => ! $entitled,
+            'offer' => $entitled ? null : app(FeatureOffer::class)->for('booking', null, $viewer),
+            'lanes' => $lanes,
+            'counts' => $counts,
+            'branches' => $options->branches($viewer),
+            'departments' => $options->departments(),
+            'team' => $options->teamInScope($viewer, $branch),
+            'isToday' => $isToday,
+            'today' => $today,
+            'canWalkIn' => $entitled && $viewer->hasPermission(Permission::JourneyWalkInCreate),
+            'canQueue' => $viewer->hasPermission(Permission::QueueView) && $entitlements->enabled('queue_management'),
+            'canCheckout' => $viewer->hasPermission(Permission::SaleCreate) && $entitlements->enabled('pos'),
+            'hasFilters' => $this->department !== '' || $this->employee !== '' || $this->group !== '' || ! $isToday,
         ]);
-    }
-
-    /**
-     * @param  list<BoardRow>  $rows
-     * @return array<string, list<BoardRow>>
-     */
-    private function group(array $rows): array
-    {
-        $grouped = [
-            'not_arrived' => [],
-            'waiting' => [],
-            'in_service' => [],
-            'completed' => [],
-            'abandoned' => [],
-        ];
-
-        foreach ($rows as $row) {
-            $grouped[$row->group()][] = $row;
-        }
-
-        return $grouped;
-    }
-
-    /**
-     * @param  list<BoardRow>  $rows
-     */
-    private function openRow(array $rows): ?BoardRow
-    {
-        if ($this->openJourney === '') {
-            return null;
-        }
-
-        foreach ($rows as $row) {
-            if ($row->journey?->uuid === $this->openJourney) {
-                return $row;
-            }
-        }
-
-        return null;
-    }
-
-    private function transition(
-        string $uuid,
-        StageStatus $target,
-        TransitionStage $transition,
-        ?string $reason = null,
-    ): void {
-        $this->run(function () use ($uuid, $target, $transition, $reason): void {
-            $stage = $this->stage($uuid);
-
-            if ($stage === null) {
-                return;
-            }
-
-            $transition($stage, $target, $this->user(), ['reason' => $reason]);
-
-            $this->saved = __('Updated.');
-        });
-    }
-
-    private function appointment(string $uuid): ?Appointment
-    {
-        $query = Appointment::query()->where('uuid', $uuid);
-
-        $this->user()->branchScope()->applyTo($query, 'branch_id');
-
-        return $query->first();
-    }
-
-    private function journey(string $uuid): ?ServiceJourney
-    {
-        $journey = ServiceJourney::query()
-            ->with(['stages', 'appointment'])
-            ->where('uuid', $uuid)
-            ->first();
-
-        return $journey instanceof ServiceJourney
-            && $this->user()->canAccessBranch($journey->branchId())
-                ? $journey
-                : null;
-    }
-
-    private function stage(string $uuid): ?JourneyStage
-    {
-        $stage = JourneyStage::query()
-            ->with(['journey.appointment', 'item'])
-            ->where('uuid', $uuid)
-            ->first();
-
-        return $stage instanceof JourneyStage
-            && $this->user()->canAccessBranch($stage->journey->branchId())
-                ? $stage
-                : null;
-    }
-
-    private function run(callable $operation): void
-    {
-        $this->error = null;
-        $this->saved = null;
-
-        try {
-            $operation();
-        } catch (JourneyFailed|ValidationException|AuthorizationException $e) {
-            $this->error = $e instanceof ValidationException
-                ? $e->validator->errors()->first()
-                : $e->getMessage();
-        }
-    }
-
-    private function user(): User
-    {
-        /** @var User $user */
-        $user = auth('web')->user();
-
-        return $user;
     }
 }

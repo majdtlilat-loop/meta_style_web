@@ -42,10 +42,47 @@ final class SalesAudit
         ?string $reason = null,
         AuditSeverity $severity = AuditSeverity::Info,
     ): void {
+        $this->write($action, Actor::staff($actor), $sale, $after, $meta, $before, $reason, $severity);
+    }
+
+    /**
+     * The same, for the scheduled work nobody pressed a button for — releasing
+     * a benefit held on a draft everybody walked away from
+     * (docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md §7).
+     *
+     * @param  array<string, mixed>  $after
+     * @param  array<string, mixed>  $meta
+     */
+    public function recordSystem(
+        string $action,
+        Sale $sale,
+        array $after = [],
+        array $meta = [],
+        ?string $reason = null,
+        AuditSeverity $severity = AuditSeverity::Info,
+    ): void {
+        $this->write($action, Actor::system('sales'), $sale, $after, $meta, null, $reason, $severity);
+    }
+
+    /**
+     * @param  array<string, mixed>  $after
+     * @param  array<string, mixed>  $meta
+     * @param  array<string, mixed>|null  $before
+     */
+    private function write(
+        string $action,
+        Actor $actor,
+        Sale $sale,
+        array $after,
+        array $meta,
+        ?array $before,
+        ?string $reason,
+        AuditSeverity $severity,
+    ): void {
         $this->audit->record(new AuditEvent(
             action: $action,
             category: AuditCategory::Finance,
-            actor: Actor::staff($actor),
+            actor: $actor,
             severity: $severity,
             targetType: Sale::class,
             targetId: $sale->uuid,

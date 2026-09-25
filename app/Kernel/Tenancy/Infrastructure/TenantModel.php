@@ -9,6 +9,7 @@ use App\Kernel\Tenancy\Enums\ProvisioningStatus;
 use App\Kernel\Tenancy\Enums\TenantStatus;
 use App\Kernel\Tenancy\Tenant;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
 use Stancl\Tenancy\Contracts\TenantWithDatabase;
 use Stancl\Tenancy\Database\Concerns\HasDatabase;
@@ -27,6 +28,15 @@ use Stancl\Tenancy\Database\Models\Tenant as BaseTenant;
  * @property int $sequence
  * @property string $name
  * @property string|null $public_key
+ * @property string|null $slug
+ * @property string|null $currency
+ * @property string|null $contact_name
+ * @property string|null $contact_email
+ * @property string|null $contact_phone
+ * @property string|null $timezone
+ * @property Carbon|null $archived_at
+ * @property Carbon|null $suspended_at
+ * @property Carbon|null $created_at
  * @property int $entitlements_version
  * @property int|null $trial_days_override
  * @property string $status
@@ -57,6 +67,12 @@ final class TenantModel extends BaseTenant implements TenantWithDatabase
             'id',
             'sequence',
             'public_key',
+            'slug',
+            'currency',
+            'contact_name',
+            'contact_email',
+            'contact_phone',
+            'timezone',
             'name',
             'status',
             'provisioning_status',
@@ -94,6 +110,12 @@ final class TenantModel extends BaseTenant implements TenantWithDatabase
         ];
     }
 
+    /** @return HasMany<DomainModel, $this> */
+    public function domains(): HasMany
+    {
+        return $this->hasMany(DomainModel::class, 'tenant_id');
+    }
+
     /**
      * Translates the persistence model into the value object the rest of the
      * application sees.
@@ -110,6 +132,8 @@ final class TenantModel extends BaseTenant implements TenantWithDatabase
             migrationStatus: MigrationStatus::from($this->migration_status),
             schemaVersion: $this->schema_version,
             publicKey: $this->public_key,
+            currency: $this->currency,
+            slug: is_string($this->slug) && $this->slug !== '' ? $this->slug : null,
         );
     }
 

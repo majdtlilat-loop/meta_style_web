@@ -36,4 +36,16 @@ return [
     'destination' => 'بڕۆ بۆ',
     'issued_at' => 'کاتی دەرچوون',
     'thank_you' => 'سوپاس بۆ چاوەڕوانیتان.',
+
+    // The state beside a recent call, and the Manager preview's sample.
+    'state_called' => 'بانگکرا',
+    'state_serving' => 'لە خزمەتدایە',
+    'sample_call' => 'نموونە',
+
+    // Screen controls: this screen only, never the queue.
+    'start' => 'دەستپێکردنی شاشە',
+    'start_hint' => 'یەک دەستلێدان دەنگ و شاشەی پڕ دەکاتەوە.',
+    'controls' => 'ئامرازەکانی شاشە',
+    'fullscreen' => 'شاشەی پڕ',
+    'exit_fullscreen' => 'دەرچوون لە شاشەی پڕ',
 ];

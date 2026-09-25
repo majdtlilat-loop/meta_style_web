@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Kernel\Localization\LanguageRegistry;
 use App\Kernel\Localization\TenantLocales;
 use App\Kernel\Localization\TranslatedText;
+use App\Kernel\Tenancy\PlatformHosts;
 
 /*
 |--------------------------------------------------------------------------
@@ -29,7 +30,7 @@ it('knows the direction of all three launch languages', function (): void {
         // wrong direction and the wrong font.
         ->and($languages->direction('ckb'))->toBe('rtl')
         ->and($languages->isRtl('ckb'))->toBeTrue()
-        ->and($languages->nativeName('ckb'))->toBe('کوردیی ناوەندی');
+        ->and($languages->nativeName('ckb'))->toBe('کوردی سۆرانی');
 });
 
 it('accepts a new language without touching any schema', function (): void {
@@ -50,6 +51,27 @@ it('accepts a new language without touching any schema', function (): void {
     $text = TranslatedText::fromArray(['en' => 'Haircut', 'tr' => 'Saç kesimi']);
 
     expect($text->get('tr'))->toBe('Saç kesimi');
+});
+
+it('shows a name in the language being read when the center publishes in it, and never a switched-off one', function (): void {
+    $center = $this->registerCenter();
+
+    $this->asCenter($center['tenant'], function (): void {
+        $name = TranslatedText::fromArray(['en' => 'Manager', 'ar' => 'المدير']);
+        app()->setLocale('en');
+
+        // An English-speaking manager of an Arabic-first center that also
+        // publishes English reads English — not the center's default.
+        app(TenantLocales::class)->setEnabled(['en', 'ar'], 'ar');
+        expect($name->get())->toBe('Manager')
+            // An explicit locale still wins over everything.
+            ->and($name->get('ar'))->toBe('المدير');
+
+        // Once English is switched off, the translation left behind never
+        // outranks the default (disabling deletes nothing, docs/07 §3).
+        app(TenantLocales::class)->setEnabled(['ar', 'ckb'], 'ar');
+        expect($name->get())->toBe('المدير');
+    });
 });
 
 it('gives a new center only the language it registered in', function (): void {
@@ -166,15 +188,17 @@ it('resolves the request locale from the query string', function (): void {
         $this->seedCatalog();
     });
 
-    $key = $this->publicKeyOf($center['tenant']);
+    $slug = (string) $center['registration']->requested_slug;
 
-    $this->getJson("/api/v1/menu/{$key}?locale=ar")
+    $url = app(PlatformHosts::class)->centerUrl($slug, "/api/v1/menu/{$slug}");
+
+    $this->getJson($url.'?locale=ar')
         ->assertOk()
         ->assertJsonPath('data.center.locale', 'ar')
         ->assertJsonPath('data.center.direction', 'rtl')
         ->assertJsonPath('data.services.0.name', 'قص شعر');
 
-    $this->getJson("/api/v1/menu/{$key}?locale=en")
+    $this->getJson($url.'?locale=en')
         ->assertOk()
         ->assertJsonPath('data.center.direction', 'ltr')
         ->assertJsonPath('data.services.0.name', 'Haircut');
@@ -189,18 +213,20 @@ it('negotiates the locale from Accept-Language when none is asked for', function
         $this->seedCatalog();
     });
 
-    $key = $this->publicKeyOf($center['tenant']);
+    $slug = (string) $center['registration']->requested_slug;
 
     // `ar-IQ` must narrow to `ar` — a hand-rolled header parser is exactly
     // where that goes wrong.
+    $url = app(PlatformHosts::class)->centerUrl($slug, "/api/v1/menu/{$slug}");
+
     $this->withHeaders(['Accept-Language' => 'ar-IQ,ar;q=0.9,en;q=0.5'])
-        ->getJson("/api/v1/menu/{$key}")
+        ->getJson($url)
         ->assertOk()
         ->assertJsonPath('data.center.locale', 'ar');
 
     // A language the center has not enabled falls back to its default.
     $this->withHeaders(['Accept-Language' => 'fr-FR,fr;q=0.9'])
-        ->getJson("/api/v1/menu/{$key}")
+        ->getJson($url)
         ->assertOk()
         ->assertJsonPath('data.center.locale', 'en');
 });
@@ -214,7 +240,10 @@ it('advertises the center\'s enabled languages on the public menu', function ():
         $this->seedCatalog();
     });
 
-    $body = $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))
+    $body = $this->getJson(app(PlatformHosts::class)->centerUrl(
+        (string) $center['registration']->requested_slug,
+        '/api/v1/menu/'.(string) $center['registration']->requested_slug,
+    ))
         ->assertOk()
         ->json('data.center.locales');
 

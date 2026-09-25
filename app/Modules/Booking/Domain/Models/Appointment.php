@@ -35,8 +35,19 @@ use Illuminate\Support\Str;
  * a model method could not honestly provide. A `$appointment->cancel()` helper
  * would be the obvious place for a channel to bypass all four (§40).
  *
+ * THE VERIFICATION CODE IS NOT GENERATED HERE. There is no `created` hook that
+ * mints one, deliberately: a one-time secret must be handed back through the
+ * return value of the call that created the booking, and a model event has
+ * nowhere to return anything to. The `CreateAppointment` Action generates it
+ * explicitly and a `BookingResult` carries it out
+ * (docs/24-BOOKING-VERIFICATION.md §3). What lives here is only the storage.
+ *
  * @property int $id
  * @property string $uuid
+ * @property string|null $reference
+ * @property string|null $verification_code_digest
+ * @property string|null $verification_code_key_version
+ * @property CarbonImmutable|null $verification_code_issued_at
  * @property int $customer_id
  * @property int $branch_id
  * @property AppointmentStatus $status
@@ -83,8 +94,19 @@ final class Appointment extends Model
             'completed_at' => 'immutable_datetime',
             'no_show_at' => 'immutable_datetime',
             'cancelled_at' => 'immutable_datetime',
+            'verification_code_issued_at' => 'immutable_datetime',
         ];
     }
+
+    /**
+     * The digest is never serialised. It is not a password — it cannot be used
+     * to impersonate anybody by itself — but it is the stored half of a
+     * capability, and an API response or a Livewire payload is no place for it
+     * (docs/24-BOOKING-VERIFICATION.md §11).
+     *
+     * @var list<string>
+     */
+    protected $hidden = ['verification_code_digest'];
 
     protected static function booted(): void
     {
@@ -153,6 +175,19 @@ final class Appointment extends Model
     public function isCancelled(): bool
     {
         return $this->status === AppointmentStatus::Cancelled;
+    }
+
+    /**
+     * Has a verification capability ever been issued for this booking?
+     *
+     * False for every appointment made before Phase 13: those were deliberately
+     * NOT given codes in bulk, because minting a live secret for a booking
+     * nobody asked about creates a credential with no owner
+     * (docs/24-BOOKING-VERIFICATION.md §10). Staff issue one on request.
+     */
+    public function hasVerificationCode(): bool
+    {
+        return $this->verification_code_digest !== null;
     }
 
     public function isTerminal(): bool

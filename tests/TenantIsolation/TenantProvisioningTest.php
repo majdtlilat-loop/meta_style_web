@@ -30,12 +30,12 @@ use Tests\Support\TestDatabaseManager;
 */
 
 it('provisions a tenant end to end', function (): void {
-    $tenant = $this->provisionTenant('Barbershop Alpha', ['alpha.metastyle.test']);
+    $tenant = $this->provisionTenant('Barbershop Alpha', ['alpha.metastyle.test'], 'barbershop-alpha');
 
     expect($tenant->status)->toBe(TenantStatus::Active)
         ->and($tenant->provisioningStatus)->toBe(ProvisioningStatus::Completed)
         ->and($tenant->isProvisioned())->toBeTrue()
-        ->and($tenant->databaseName)->toBe(TenantDatabaseName::forSequence(1));
+        ->and($tenant->databaseName)->toBe(TenantDatabaseName::generate(1, 'barbershop-alpha'));
 
     // The seeded system data proves the database was created, migrated,
     // seeded and is readable through tenant context.
@@ -46,13 +46,14 @@ it('provisions a tenant end to end', function (): void {
         ->toContain('tenant_key', 'tenant_name', 'schema_version', 'provisioned_at');
 });
 
-it('derives the database name from the internal sequence, never the center name', function (): void {
-    // A hostile display name must not influence a SQL identifier.
+it('never lets a center name reach the database name', function (): void {
+    // Only the SLUG labels a database (ADR-106). A hostile display name with
+    // no slug beside it leaves the neutral label and nothing of itself.
     $tenant = $this->provisionTenant("Salon'; DROP DATABASE meta_style_control; --");
 
-    expect($tenant->databaseName)->toBe(TenantDatabaseName::forSequence($tenant->sequence))
+    expect($tenant->databaseName)->toBe(TenantDatabaseName::generate($tenant->sequence, null))
         ->and(TenantDatabaseName::isValid($tenant->databaseName))->toBeTrue()
-        ->and($tenant->databaseName)->not->toContain('DROP');
+        ->and(str_contains($tenant->databaseName, 'salon'))->toBeFalse();
 });
 
 it('gives sequential tenants distinct databases', function (): void {

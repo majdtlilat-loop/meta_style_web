@@ -16,6 +16,6 @@ final class EntitlementRequired extends RuntimeException
 {
     public function __construct(public readonly string $entitlement)
     {
-        parent::__construct("This center's plan does not include [{$entitlement}].");
+        parent::__construct(__("This center's plan does not include [:entitlement].", ['entitlement' => $entitlement]));
     }
 }

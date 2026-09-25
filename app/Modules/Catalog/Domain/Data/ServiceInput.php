@@ -22,6 +22,11 @@ final readonly class ServiceInput
      * @param  list<int>|null  $addonIds
      * @param  list<int>|null  $branchIds
      * @param  list<int>|null  $employeeIds
+     *
+     * `sortOrder` null means "the library decides": a new service goes to the
+     * end of its category, an edited one keeps its place (and moves to the end
+     * of its new category when the category changes). An integer is written
+     * as-is — the API's explicit value.
      */
     public function __construct(
         public array $name,
@@ -35,7 +40,7 @@ final readonly class ServiceInput
         public bool $isPublic = true,
         public bool $isOnlineBookable = true,
         public bool $availableAtAllBranches = true,
-        public int $sortOrder = 0,
+        public ?int $sortOrder = null,
         public ?array $variations = null,
         public ?array $addonIds = null,
         public ?array $branchIds = null,

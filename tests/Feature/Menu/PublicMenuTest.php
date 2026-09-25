@@ -5,7 +5,7 @@ declare(strict_types=1);
 use App\Kernel\Localization\TranslatedText;
 use App\Kernel\SaaS\Models\Registration;
 use App\Kernel\Tenancy\Contracts\TenantContext;
-use App\Kernel\Tenancy\Infrastructure\TenantModel;
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Kernel\Tenancy\Tenant;
 use App\Modules\Branches\Domain\Models\Branch;
 use App\Modules\Catalog\Domain\Models\Service;
@@ -29,6 +29,11 @@ use Illuminate\Support\Str;
 | nothing operational — and it has to do that in a bounded number of queries,
 | because it renders a whole catalog at once.
 |
+| Since Phase 15 (ADR-076) a guest reaches it on the center's own subdomain,
+| with the same public slug in the path: the HOST resolves the center, and the
+| path slug only names the resource — a slug that disagrees with the host is
+| "no center here", never a second resolution source.
+|
 */
 
 /**
@@ -48,11 +53,23 @@ function seedPublishedMenu(array $center): void
     });
 }
 
+/**
+ * The public menu API URL for a center: its own subdomain, its slug in the path.
+ *
+ * @param  array{tenant: Tenant, registration: Registration, password: string, access_token: string}  $center
+ */
+function pmUrl(array $center, string $query = ''): string
+{
+    $slug = (string) $center['registration']->requested_slug;
+
+    return app(PlatformHosts::class)->centerUrl($slug, '/api/v1/menu/'.$slug.$query);
+}
+
 it('serves a center menu to a guest with no credentials at all', function (): void {
     $center = $this->registerCenter('Barbershop Alpha', 'owner@alpha.test');
     seedPublishedMenu($center);
 
-    $response = $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))->assertOk();
+    $response = $this->getJson(pmUrl($center))->assertOk();
 
     expect($response->json('data.center.name'))->toBe('Barbershop Alpha')
         ->and($response->json('data.services'))->toHaveCount(1)
@@ -79,10 +96,10 @@ it('serves each center its own menu and never another\'s', function (): void {
         ]);
     });
 
-    $alphaBody = (string) $this->getJson('/api/v1/menu/'.$this->publicKeyOf($alpha['tenant']))
+    $alphaBody = (string) $this->getJson(pmUrl($alpha))
         ->assertOk()->getContent();
 
-    $betaBody = (string) $this->getJson('/api/v1/menu/'.$this->publicKeyOf($beta['tenant']))
+    $betaBody = (string) $this->getJson(pmUrl($beta))
         ->assertOk()->getContent();
 
     // The release-gate property, on the one surface strangers can reach.
@@ -93,6 +110,9 @@ it('serves each center its own menu and never another\'s', function (): void {
 it('answers an unknown center key exactly like an unknown page', function (): void {
     $this->getJson('/api/v1/menu/ctr_'.Str::lower(Str::random(32)))->assertNotFound();
     $this->getJson('/api/v1/menu/not-even-a-key')->assertNotFound();
+
+    // A subdomain nobody registered is not a center either.
+    $this->getJson(app(PlatformHosts::class)->centerUrl('nobody-here', '/api/v1/menu/nobody-here'))->assertNotFound();
 });
 
 it('has no menu until the center publishes one', function (): void {
@@ -105,7 +125,7 @@ it('has no menu until the center publishes one', function (): void {
         MenuVersion::query()->delete();
     });
 
-    $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))->assertNotFound();
+    $this->getJson(pmUrl($center))->assertNotFound();
 });
 
 it('shows only the branch that was asked for, and only if it is public', function (): void {
@@ -119,17 +139,15 @@ it('shows only the branch that was asked for, and only if it is public', functio
         return ['public' => $public->uuid, 'hidden' => $hidden->uuid];
     });
 
-    $key = $this->publicKeyOf($center['tenant']);
-
-    $this->getJson("/api/v1/menu/{$key}?branch={$branches['public']}")
+    $this->getJson(pmUrl($center, "?branch={$branches['public']}"))
         ->assertOk()
         ->assertJsonPath('data.branch.name', 'Public Branch');
 
     // A hidden branch is not found, not silently swapped for another — showing
     // a customer the wrong address is worse than showing none.
-    $this->getJson("/api/v1/menu/{$key}?branch={$branches['hidden']}")->assertNotFound();
+    $this->getJson(pmUrl($center, "?branch={$branches['hidden']}"))->assertNotFound();
 
-    $listed = $this->getJson("/api/v1/menu/{$key}")->assertOk()->json('data.branches');
+    $listed = $this->getJson(pmUrl($center))->assertOk()->json('data.branches');
 
     expect(array_column($listed, 'name'))->not->toContain('Back Office');
 });
@@ -158,9 +176,7 @@ it('restricts a branch menu to the services offered there', function (): void {
         return $second;
     });
 
-    $key = $this->publicKeyOf($center['tenant']);
-
-    $atSecond = $this->getJson("/api/v1/menu/{$key}?branch={$second->uuid}")->assertOk()->json('data.services');
+    $atSecond = $this->getJson(pmUrl($center, "?branch={$second->uuid}"))->assertOk()->json('data.services');
 
     expect(array_column($atSecond, 'name'))
         ->toContain('Haircut')
@@ -197,7 +213,7 @@ it('excludes anything inactive, archived or held back from the public', function
         ]);
     });
 
-    $body = (string) $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))
+    $body = (string) $this->getJson(pmUrl($center))
         ->assertOk()->getContent();
 
     expect($body)->not->toContain('Inactive Service')
@@ -233,7 +249,7 @@ it('leaks nothing internal — no ids, notes, staff contacts or audit data', fun
         $published->forceFill(['sections' => $sections])->save();
     });
 
-    $body = (string) $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))
+    $body = (string) $this->getJson(pmUrl($center))
         ->assertOk()->getContent();
 
     /** @var array<string, mixed> $decoded */
@@ -270,7 +286,7 @@ it('resolves an inheriting variation to a real price before a customer sees it',
     $center = $this->registerCenter();
     seedPublishedMenu($center);
 
-    $variations = $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))
+    $variations = $this->getJson(pmUrl($center))
         ->assertOk()->json('data.services.0.variations');
 
     expect($variations)->toHaveCount(3);
@@ -319,7 +335,7 @@ it('renders the whole menu in a bounded number of queries', function (): void {
         }
     });
 
-    $response = $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))->assertOk();
+    $response = $this->getJson(pmUrl($center))->assertOk();
 
     expect($response->json('data.services'))->toHaveCount(25)
         // The count is bounded by the number of RELATIONS, not by the number of
@@ -331,7 +347,7 @@ it('clears the tenant context after a public menu request', function (): void {
     $center = $this->registerCenter();
     seedPublishedMenu($center);
 
-    $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))->assertOk();
+    $this->getJson(pmUrl($center))->assertOk();
 
     // A guest request leaves no more residue than an authenticated one.
     expect(app(TenantContext::class)->isBound())->toBeFalse();
@@ -344,27 +360,26 @@ it('refuses a public key that disagrees with the host it arrived on', function (
     seedPublishedMenu($alpha);
     seedPublishedMenu($beta);
 
-    TenantModel::query()->findOrFail($beta['tenant']->id)
-        ->domains()->create(['domain' => 'beta.menu.test', 'is_primary' => true]);
+    // Two sources naming different centers is never resolved by preferring
+    // one, on the public surface either: on Beta's host, Alpha's slug in the
+    // path is "no center here" — the answer any unknown address gets — and
+    // nothing of either menu is served.
+    $betaSlug = (string) $beta['registration']->requested_slug;
+    $alphaSlug = (string) $alpha['registration']->requested_slug;
 
-    // Two trusted sources naming different centers is never resolved by
-    // preferring one, on the public surface either.
-    $this->getJson('http://beta.menu.test/api/v1/menu/'.$this->publicKeyOf($alpha['tenant']))
-        ->assertForbidden()
-        ->assertJsonPath('error.code', 'TENANT.RESOLUTION_CONFLICT');
+    $response = $this->getJson(app(PlatformHosts::class)->centerUrl($betaSlug, '/api/v1/menu/'.$alphaSlug))
+        ->assertNotFound();
+
+    expect((string) $response->getContent())->not->toContain('Haircut');
 });
 
-it('serves the menu from a center\'s own host with no key in the path', function (): void {
+it('serves the menu from the center\'s own registered subdomain', function (): void {
     $center = $this->registerCenter();
     seedPublishedMenu($center);
 
-    TenantModel::query()->findOrFail($center['tenant']->id)
-        ->domains()->create(['domain' => 'alpha.menu.test', 'is_primary' => true]);
-
-    // A center with its own domain resolves by host, exactly as the
-    // authenticated surfaces do — the path key is a convenience for the many
-    // centers that will never buy a domain.
-    $this->getJson('http://alpha.menu.test/api/v1/menu/'.$this->publicKeyOf($center['tenant']))
+    // The registered subdomain is authoritative (ADR-076): the center resolves
+    // by host, exactly as the authenticated surfaces do.
+    $this->getJson(pmUrl($center))
         ->assertOk()
         ->assertJsonPath('data.services.0.name', 'Haircut');
 });

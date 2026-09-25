@@ -6,6 +6,9 @@ namespace App\Modules\Sales\Application;
 
 use App\Kernel\Authorization\Permission;
 use App\Kernel\Identity\Models\User;
+use App\Kernel\Localization\TranslatedText;
+use App\Kernel\Money\Currency;
+use App\Kernel\Money\Money;
 use App\Modules\Sales\Domain\Models\CashierShift;
 use App\Modules\Sales\Domain\Models\Invoice;
 use App\Modules\Sales\Domain\Models\Sale;
@@ -31,6 +34,7 @@ final class SalesPresenter
     public function __construct(
         private readonly InvoiceRenderer $renderer,
         private readonly InvoiceLinks $links,
+        private readonly LineEmployees $employees,
     ) {}
 
     /**
@@ -68,10 +72,34 @@ final class SalesPresenter
         ];
 
         if ($withLines) {
-            $data['lines'] = array_values($sale->items->map(fn (SaleItem $item): array => $this->line($sale, $item))->all());
+            // Which line each benefit rests on, by the line's uuid — no ids.
+            $lineUuids = [];
+
+            foreach ($sale->items as $item) {
+                $lineUuids[(int) $item->getKey()] = $item->uuid;
+            }
+
+            $benefitLines = array_flip(array_filter(array_map(
+                static fn (SaleAdjustment $a): ?int => $a->sale_item_id,
+                $sale->adjustments->all(),
+            )));
+
+            // Who performed each service line — staff-facing only; the
+            // customer's invoice never names staff. One query for the sale.
+            $employees = $this->employees->named(array_values($sale->items->map(static fn (SaleItem $item): ?int => $item->employee_id)->all()));
+
+            $data['lines'] = array_values($sale->items->map(fn (SaleItem $item): array => $this->line($sale, $item) + [
+                'has_benefit' => isset($benefitLines[(int) $item->getKey()]),
+                'employee' => $item->employee_id === null ? null : ($employees[$item->employee_id] ?? null),
+            ])->all());
             $data['adjustments'] = array_values($sale->adjustments->map(fn (SaleAdjustment $a): array => [
                 'uuid' => $a->uuid,
                 'type' => $a->type->value,
+                // A benefit (points, a member's price, a package session) is a
+                // discount too; only a surcharge adds to the bill.
+                'is_discount' => $a->type->isDiscount(),
+                'benefit' => $a->type->isBenefit(),
+                'line' => $a->sale_item_id === null ? null : ($lineUuids[$a->sale_item_id] ?? null),
                 'basis_points' => $a->basis_points,
                 'percent' => $a->basis_points === null ? null : SalePricing::percentLabel($a->basis_points),
                 'amount' => $sale->money($a->amount_minor)->toArray($locale),
@@ -81,6 +109,26 @@ final class SalesPresenter
         }
 
         return $data;
+    }
+
+    /**
+     * What the till can sell besides the catalog — memberships, packages —
+     * as other modules offer them. Opaque type and reference; Sales prices
+     * the line from the offering when it is added, never from this list.
+     *
+     * @param  list<array{type: string, reference: string, name: TranslatedText, unit_price_minor: int}>  $offerings
+     * @return list<array<string, mixed>>
+     */
+    public function offerings(array $offerings): array
+    {
+        $locale = app()->getLocale();
+
+        return array_map(static fn (array $offering): array => [
+            'type' => $offering['type'],
+            'reference' => $offering['reference'],
+            'name' => $offering['name']->get($locale),
+            'unit_price' => Money::fromMinor($offering['unit_price_minor'], Currency::default())->toArray($locale),
+        ], $offerings);
     }
 
     /**
@@ -101,6 +149,9 @@ final class SalesPresenter
             ])->all()),
             'quantity' => $item->quantity,
             'from_visit' => $item->journey_stage_id !== null,
+            // For an offering line: which catalog sold it (a membership, a
+            // package). Opaque here; its module explains it.
+            'offering_type' => $item->offering_type,
             'price_source' => $item->price_source->value,
             'original_unit_price' => $sale->money($item->original_unit_price_minor)->toArray($locale),
             'unit_price' => $sale->money($item->unit_price_minor)->toArray($locale),
@@ -166,6 +217,7 @@ final class SalesPresenter
             'status' => $shift->status->value,
             'branch' => $shift->relationLoaded('branch') ? $shift->branch?->uuid : null,
             'cashier' => $shift->relationLoaded('user') ? $shift->user?->name : null,
+            'opening_cash_minor' => $shift->opening_cash_minor,
             'opened_at' => $shift->opened_at->toIso8601String(),
             'closed_at' => $shift->closed_at?->toIso8601String(),
             'opening_note' => $shift->opening_note,

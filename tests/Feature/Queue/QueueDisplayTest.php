@@ -6,6 +6,7 @@ use App\Kernel\Entitlements\Entitlements;
 use App\Kernel\Identity\Models\User;
 use App\Kernel\SaaS\Enums\OverrideMode;
 use App\Kernel\SaaS\Models\TenantEntitlementOverride;
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Modules\Queue\Application\Actions\CallTicket;
 use App\Modules\Queue\Application\Actions\CreateWalkInTicket;
 use App\Modules\Queue\Domain\Models\QueueDisplay;
@@ -62,9 +63,24 @@ function qdTicket(array $seed, User $owner, string $name = 'Sara Ahmed'): QueueT
     )['ticket'];
 }
 
+/**
+ * A URL on the center's OWN host. Since Phase 15 a public center route resolves
+ * from its subdomain, and the public slug in the path must agree with it
+ * (ResolvePublicTenant) — the internal public key is no longer a path segment.
+ */
+function qdHostUrl(array $center, string $path): string
+{
+    return app(PlatformHosts::class)->centerUrl(qdSlug($center), $path);
+}
+
+function qdSlug(array $center): string
+{
+    return (string) $center['registration']->requested_slug;
+}
+
 function qdUrl(array $center, QueueDisplay $display): string
 {
-    return '/api/v1/queue/'.$center['tenant']->publicKey.'/displays/'.$display->public_key;
+    return qdHostUrl($center, '/api/v1/queue/'.qdSlug($center).'/displays/'.$display->public_key);
 }
 
 it('shows the current call and a bounded list of recent ones', function (): void {
@@ -162,8 +178,12 @@ it('gives every call a new announcement id, and a recall another one', function 
 
     expect($again)->toBe($first)
         ->and($first)->not->toBeNull()
-        // A uuid, not a row id.
-        ->and($first)->toMatch('/^[0-9a-f-]{36}$/');
+        // An opaque key — neither a row id nor the call event's uuid (§13).
+        ->and($first)->toMatch('/^[0-9a-f]{16}$/');
+
+    $event = $this->asCenter($center['tenant'], fn (): string => (string) QueueTicket::query()->firstOrFail()->last_announcement_uuid);
+
+    expect(str_contains((string) $this->getJson(qdUrl($center, $display))->getContent(), $event))->toBeFalse();
 
     $this->asCenter($center['tenant'], function (): void {
         $ticket = QueueTicket::query()->firstOrFail();
@@ -216,7 +236,7 @@ it('fails closed for an unknown, inactive or archived screen', function (): void
 
     // Unknown key: 404, the same answer as a center that does not exist, so
     // nobody can enumerate a center's screens (§9).
-    $this->getJson('/api/v1/queue/'.$center['tenant']->publicKey.'/displays/'.str_repeat('a', 32))
+    $this->getJson(qdHostUrl($center, '/api/v1/queue/'.qdSlug($center).'/displays/'.str_repeat('a', 32)))
         ->assertStatus(404);
 
     $this->asCenter($center['tenant'], function () use ($display): void {
@@ -252,8 +272,13 @@ it('keeps one center\'s screen away from another center\'s calls', function (): 
         app(CallTicket::class)($ticket, $owner, $seed['reception']->uuid);
     });
 
-    // The display key belongs to center one; center two's key must not reach it.
-    $this->getJson('/api/v1/queue/'.$two['tenant']->publicKey.'/displays/'.$display->public_key)
+    // The display key belongs to center one; center two's host must not reach it.
+    $this->getJson(qdHostUrl($two, '/api/v1/queue/'.qdSlug($two).'/displays/'.$display->public_key))
+        ->assertStatus(404);
+
+    // Nor may center one's slug in the path ride on center two's host: the
+    // host is authoritative and a disagreement fails closed.
+    $this->getJson(qdHostUrl($two, '/api/v1/queue/'.qdSlug($one).'/displays/'.$display->public_key))
         ->assertStatus(404);
 
     $response = $this->getJson(qdUrl($one, $display))->assertStatus(200);
@@ -300,14 +325,14 @@ it('renders the display page itself, with no login and no controls', function ()
         return $this->seedDisplay($seed['branch']);
     });
 
-    $response = $this->get('/q/'.$center['tenant']->publicKey.'/'.$display->public_key)
+    $response = $this->get(qdHostUrl($center, '/q/'.$display->public_key))
         ->assertStatus(200);
 
     $html = $response->getContent();
 
     // The feed URL is embedded through `@json`, which escapes slashes — so the
     // key is what to look for rather than the whole path.
-    expect($html)->toContain($center['tenant']->publicKey)
+    expect($html)->toContain(qdSlug($center))
         ->toContain($display->public_key)
         // Read only: nothing on this page can change anything.
         ->not->toContain('<form')

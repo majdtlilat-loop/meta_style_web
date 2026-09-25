@@ -7,7 +7,7 @@ use App\Kernel\Localization\TenantLocales;
 use App\Kernel\Localization\TranslatedText;
 use App\Kernel\Tenancy\Infrastructure\StanclTenantResolver;
 use App\Livewire\Center\Branches;
-use App\Livewire\Center\Catalog;
+use App\Livewire\Center\Catalog\ServiceEditor;
 use App\Livewire\Center\MenuDesigner;
 use App\Modules\Branches\Domain\Models\Branch;
 use App\Modules\Catalog\Domain\Models\Service;
@@ -83,8 +83,10 @@ it('creates a service with a variation that inherits its price', function (): vo
     $owner = $this->ownerOf($center['tenant']);
 
     $this->asCenter($center['tenant'], function () use ($owner): void {
+        // The form lives in the service drawer since the library redesign;
+        // same property names, same Action.
         Livewire::actingAs($owner)
-            ->test(Catalog::class)
+            ->test(ServiceEditor::class)
             ->set('serviceName.en', 'Haircut')
             ->set('duration', 30)
             ->set('price', '25000')
@@ -112,7 +114,7 @@ it('rejects a price the currency cannot express', function (): void {
         // IQD has no minor unit, so "25000.50" is not a price a center can
         // charge — and it must be refused rather than silently truncated.
         Livewire::actingAs($owner)
-            ->test(Catalog::class)
+            ->test(ServiceEditor::class)
             ->set('serviceName.en', 'Haircut')
             ->set('duration', 30)
             ->set('price', '25000.50')
@@ -131,11 +133,15 @@ it('renders one input per enabled locale, and no more', function (): void {
         app(TenantLocales::class)->setEnabled(['en', 'ar'], 'en');
 
         // A center that has not enabled Kurdish never sees a Kurdish field.
+        // The drawer renders one language tab per ENABLED content locale
+        // (x-ui.lang-tabs); the visible label for Kurdish would be "KU".
         Livewire::actingAs($owner)
-            ->test(Catalog::class)
-            ->assertSee('(en)')
-            ->assertSee('(ar)')
-            ->assertDontSee('(ckb)');
+            ->test(ServiceEditor::class)
+            ->call('create')
+            ->assertSee('id="service-text-tab-en"', false)
+            ->assertSee('id="service-text-tab-ar"', false)
+            ->assertDontSee('service-text-tab-ckb', false)
+            ->assertDontSee('CKB');
     });
 });
 
@@ -187,9 +193,9 @@ it('serves the public menu page to a guest, in the right direction', function ()
         $this->seedCatalog();
     });
 
-    $key = $this->publicKeyOf($center['tenant']);
+    $slug = $center['registration']->requested_slug;
 
-    $this->get("/m/{$key}")
+    $this->get("http://{$slug}.localhost:8000/list")
         ->assertOk()
         ->assertSee('Barbershop Alpha')
         ->assertSee('Haircut')
@@ -198,7 +204,7 @@ it('serves the public menu page to a guest, in the right direction', function ()
 
     // Arabic is right-to-left, and the direction comes from the language
     // registry rather than a hardcoded list (docs/07-LOCALIZATION.md §10).
-    $this->get("/m/{$key}?locale=ar")
+    $this->get("http://{$slug}.localhost:8000/list?locale=ar")
         ->assertOk()
         ->assertSee('قص شعر')
         ->assertSee('dir="rtl"', escape: false)
@@ -221,7 +227,8 @@ it('keeps the public menu page free of anything internal', function (): void {
         ]);
     });
 
-    $html = $this->get('/m/'.$this->publicKeyOf($center['tenant']))->assertOk()->getContent();
+    $slug = $center['registration']->requested_slug;
+    $html = $this->get("http://{$slug}.localhost:8000/list")->assertOk()->getContent();
 
     expect($html)->not->toContain('Cost 8,000')
         ->not->toContain('Staff Only Service')
@@ -233,15 +240,17 @@ it('shows the center area only to a signed-in member of staff', function (): voi
     $center = $this->registerCenter();
     $owner = $this->ownerOf($center['tenant']);
 
+    $slug = $center['registration']->requested_slug;
+
     $this->withSession([
         StanclTenantResolver::SESSION_KEY => $this->publicKeyOf($center['tenant']),
         Permission::BranchView->value => null,
-    ])->get('/center/branches')->assertRedirect();
+    ])->get("http://{$slug}.localhost:8000/manager/branches")->assertRedirect();
 
     $this->withSession([
         StanclTenantResolver::SESSION_KEY => $this->publicKeyOf($center['tenant']),
         Auth::guard('web')->getName() => $owner->getAuthIdentifier(),
-    ])->get('/center/branches')->assertOk()->assertSee('Branches');
+    ])->get("http://{$slug}.localhost:8000/manager/branches")->assertOk()->assertSee('Branches');
 });
 
 afterEach(function (): void {

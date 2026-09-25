@@ -15,6 +15,8 @@ use App\Kernel\Authorization\Permission;
 use App\Kernel\Identity\Actions\ManageStaffActivation;
 use App\Kernel\Identity\Actions\RevokeApiTokens;
 use App\Kernel\Identity\Models\User;
+use App\Modules\Branches\Domain\BranchLock;
+use App\Modules\Employees\Application\StaffGuard;
 use App\Modules\Employees\Domain\Enums\EmployeeStatus;
 use App\Modules\Employees\Domain\Models\Employee;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -28,6 +30,13 @@ use Illuminate\Support\Facades\DB;
  * revoked. Leaving a live token behind is how a "removed" employee keeps
  * reading the customer list for another month.
  *
+ * Three accounts are never switched off here: the owner's, the actor's own (a
+ * manager who disables themselves has locked a center out of its own staff
+ * page), and one holding permissions the actor does not.
+ *
+ * Status decides who is bookable, so the change takes the branch lock of every
+ * branch the person works at (ADR-047). Existing appointments are untouched.
+ *
  * The employee record itself is never deleted — historical bookings, invoices
  * and audit entries must keep resolving to a name.
  */
@@ -36,6 +45,7 @@ final class SetEmployeeStatus
     public function __construct(
         private readonly RevokeApiTokens $revokeTokens,
         private readonly ManageStaffActivation $activation,
+        private readonly BranchLock $lock,
         private readonly Audit $audit,
     ) {}
 
@@ -45,27 +55,32 @@ final class SetEmployeeStatus
     public function __invoke(Employee $employee, EmployeeStatus $status, User $actingUser): Employee
     {
         if (! $actingUser->hasPermission(Permission::StaffDeactivate)) {
-            throw new AuthorizationException('You may not change staff status.');
+            throw new AuthorizationException(__('manager_staff.errors.status_denied'));
         }
 
-        $scope = $actingUser->branchScope();
-
-        foreach ($employee->branchIds() as $branchId) {
-            if (! $scope->allows($branchId)) {
-                throw new AuthorizationException('That member of staff is outside your branches.');
-            }
-        }
+        StaffGuard::assertReaches($actingUser, $employee);
 
         /** @var User|null $user */
         $user = $employee->user;
 
         if ($user?->is_owner === true) {
-            throw new AuthorizationException('The owner account cannot be deactivated.');
+            throw new AuthorizationException(__('manager_staff.errors.owner_protected'));
+        }
+
+        if ($user !== null && (int) $user->getKey() === (int) $actingUser->getKey()) {
+            throw new AuthorizationException(__('manager_staff.errors.self_status'));
+        }
+
+        if ($user !== null) {
+            StaffGuard::assertNotOutranked($user, $actingUser);
         }
 
         $before = $employee->status->value;
+        $branchIds = $employee->branchIds();
 
-        DB::connection('tenant')->transaction(function () use ($employee, $status, $user, $actingUser): void {
+        DB::connection('tenant')->transaction(function () use ($employee, $status, $user, $actingUser, $branchIds): void {
+            $this->lock->acquire($branchIds);
+
             $employee->forceFill(['status' => $status])->save();
 
             if ($user === null) {

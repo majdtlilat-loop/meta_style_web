@@ -55,8 +55,29 @@ return [
         'memberships' => ['type' => EntitlementType::Boolean, 'category' => 'engagement', 'requires' => ['pos']],
         'packages' => ['type' => EntitlementType::Boolean, 'category' => 'engagement', 'requires' => ['pos']],
 
+        /*
+         * Reviews and the ratings that hang off them. ONE key, not three: the
+         * QR image and the moderation screen are presentations of the same
+         * capability, and selling them apart would be three switches a center
+         * has to understand to get one feature (docs/22-REVIEWS.md §18).
+         *
+         * NO DEPENDENCY, deliberately. A review is about a completed
+         * ServiceJourney with a performed stage, and a journey is a WALK-IN as
+         * readily as a booked visit — `service_journeys.appointment_id` is
+         * nullable precisely so a walk-in never has to invent an appointment
+         * (ADR-051). Declaring `requires => ['booking']` would have made the
+         * dependency closure silently drop `reviews` from a walk-in-only
+         * center, and would have tied a feature about visits that ALREADY
+         * HAPPENED to a capability about arranging future ones.
+         *
+         * No seeded plan sells it yet, exactly like the queue keys: a phase
+         * defines a capability; the SaaS work decides which package gets it.
+         */
+        'reviews' => ['type' => EntitlementType::Boolean, 'category' => 'engagement'],
+
         // ---- Insight ---------------------------------------------------
-        'reports_advanced' => ['type' => EntitlementType::Boolean, 'category' => 'insight'],
+        'reports_standard' => ['type' => EntitlementType::Boolean, 'category' => 'insight'],
+        'reports_advanced' => ['type' => EntitlementType::Boolean, 'category' => 'insight', 'requires' => ['reports_standard']],
 
         // ---- Channels --------------------------------------------------
         'whatsapp_booking' => ['type' => EntitlementType::Boolean, 'category' => 'channels', 'requires' => ['booking']],

@@ -3,18 +3,30 @@
 use App\Kernel\Authorization\Console\SyncSystemRolesCommand;
 use App\Kernel\Database\Console\MigrateControlCommand;
 use App\Kernel\Diagnostics\Console\DoctorCommand;
+use App\Kernel\Entitlements\Exceptions\EntitlementRequired;
 use App\Kernel\Entitlements\Http\Middleware\RequireEntitlement;
 use App\Kernel\Http\ApiExceptionRenderer;
 use App\Kernel\Http\Console\SweepIdempotencyKeysCommand;
 use App\Kernel\Localization\Http\Middleware\SetLocale;
 use App\Kernel\Observability\Middleware\AssignRequestId;
+use App\Kernel\Platform\Authorization\Http\Middleware\RequirePlatformPermission;
+use App\Kernel\Platform\Directory\Console\ProjectCenterUsersCommand;
+use App\Kernel\Platform\Identity\Console\CreatePlatformUserCommand;
+use App\Kernel\Platform\Identity\Http\Middleware\EnsurePlatformMfa;
+use App\Kernel\Platform\Identity\PlatformLanding;
+use App\Kernel\Reconciliation\Console\ReconcileCommand;
 use App\Kernel\Tenancy\Console\MigrateTenantsCommand;
 use App\Kernel\Tenancy\Console\ProvisionTenantCommand;
 use App\Kernel\Tenancy\Console\TenantStatusCommand;
+use App\Kernel\Tenancy\Http\Middleware\ResolveLivewireTenant;
 use App\Kernel\Tenancy\Http\Middleware\ResolvePublicTenant;
 use App\Kernel\Tenancy\Http\Middleware\ResolveTenant;
+use App\Kernel\Tenancy\PlatformHosts;
+use App\Kernel\Usage\Console\ProjectUsageCommand;
+use App\Modules\Notifications\Application\Console\NotificationsSweepCommand;
 use App\Modules\Onboarding\Console\RetryRegistrationCommand;
 use App\Modules\Onboarding\Console\SweepRegistrationsCommand;
+use App\View\Manager\FeatureLockedPage;
 use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -36,13 +48,64 @@ return Application::configure(basePath: dirname(__DIR__))
         MigrateTenantsCommand::class,
         TenantStatusCommand::class,
         SyncSystemRolesCommand::class,
+        ReconcileCommand::class,
         RetryRegistrationCommand::class,
         SweepRegistrationsCommand::class,
         SweepIdempotencyKeysCommand::class,
+        NotificationsSweepCommand::class,
+        ProjectUsageCommand::class,
+        ProjectCenterUsersCommand::class,
+        CreatePlatformUserCommand::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
+        // Plain presentation preferences, read before first paint; never
+        // anything a server decision depends on.
+        $middleware->encryptCookies(except: ['metastyle-theme', 'metastyle-sidebar']);
+
+        $middleware->redirectGuestsTo(function (Request $request): string {
+            $hosts = app(PlatformHosts::class);
+
+            if ($request->getHost() === $hosts->superAdminHost()) {
+                return route('superadmin.login');
+            }
+
+            $slug = $hosts->centerSlugFromHost($request->getHost());
+
+            return $slug === null
+                ? $hosts->corporateUrl()
+                : route('login', ['center' => $slug]);
+        });
+
+        // Laravel's default authenticated-user redirect looks for a generic
+        // `home` route. Meta Style has one, but it is the corporate landing
+        // page — not the home of a platform administrator or center user.
+        // Resolve the destination from the current authoritative host so a
+        // signed-in user can never cross authentication surfaces merely by
+        // visiting that surface's login route.
+        $middleware->redirectUsersTo(function (Request $request): string {
+            $hosts = app(PlatformHosts::class);
+
+            if ($request->getHost() === $hosts->superAdminHost()) {
+                return route(PlatformLanding::routeFor($request->user('platform')));
+            }
+
+            $slug = $hosts->centerSlugFromHost($request->getHost());
+
+            return $slug === null
+                ? $hosts->corporateUrl()
+                : route('center.dashboard', ['center' => $slug]);
+        });
+
         // Correlation id runs first so every later failure is attributable.
         $middleware->prepend(AssignRequestId::class);
+
+        // Livewire replays persistent middleware before a component action in
+        // a short internal pipeline. ResolveTenant is exception-safe and
+        // restores context when that pipeline ends, so a center component
+        // otherwise reaches its action with no tenant bound. Appending this to
+        // the real web group keeps tenancy around the complete update request.
+        // It is a no-op for ordinary web requests and platform Livewire hosts.
+        $middleware->appendToGroup('web', ResolveLivewireTenant::class);
 
         // Applied per route group, never globally: platform routes must run
         // with no tenant bound (docs/01-ARCHITECTURE.md §2).
@@ -80,6 +143,16 @@ return Application::configure(basePath: dirname(__DIR__))
             prepend: ResolvePublicTenant::class,
         );
 
+        // The Livewire resolver too. Livewire's upload endpoint carries
+        // `throttle:60,1`, and the throttle keys on `$request->user()` — a staff
+        // user in the TENANT database. Unprioritised, this resolver sorted
+        // after the throttle, so every browser upload by a signed-in center
+        // user failed with no tenant bound (MiddlewareOrderGuard).
+        $middleware->prependToPriorityList(
+            before: SetLocale::class,
+            prepend: ResolveLivewireTenant::class,
+        );
+
         $middleware->alias([
             'tenant' => ResolveTenant::class,
 
@@ -94,10 +167,18 @@ return Application::configure(basePath: dirname(__DIR__))
             // Entitlements::ensure() themselves — non-HTTP callers never reach
             // middleware (docs/05-ENTITLEMENTS.md §6).
             'entitlement' => RequireEntitlement::class,
+            'platform.permission' => RequirePlatformPermission::class,
+            'platform.mfa' => EnsurePlatformMfa::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(
             fn (Throwable $e, Request $request) => app(ApiExceptionRenderer::class)->render($e, $request)
+        );
+
+        // A plan feature an Action refused, on a web page: 403 with the
+        // upgrade offer instead of a 500. JSON keeps the envelope above.
+        $exceptions->render(
+            fn (EntitlementRequired $e, Request $request) => app(FeatureLockedPage::class)->render($e, $request)
         );
     })->create();

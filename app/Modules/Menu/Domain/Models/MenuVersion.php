@@ -31,6 +31,7 @@ use Illuminate\Support\Str;
  * @property list<array{key: string, visible: bool, config: array<string, string|bool|int>}> $sections
  * @property int|null $published_by_user_id
  * @property Carbon|null $published_at
+ * @property-read User|null $publishedBy
  */
 final class MenuVersion extends Model
 {

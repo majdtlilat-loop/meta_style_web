@@ -4,13 +4,11 @@ declare(strict_types=1);
 
 use App\Kernel\Authorization\Permission;
 use App\Kernel\Identity\Models\User;
-use App\Kernel\Tenancy\Infrastructure\StanclTenantResolver;
 use App\Modules\Queue\Application\Actions\CreateWalkInTicket;
 use App\Modules\Queue\Application\TicketPrinter;
 use App\Modules\Queue\Domain\Models\QueueTicket;
 use App\Modules\ServiceJourney\Domain\Data\WalkInRequest;
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 
 /*
@@ -117,18 +115,22 @@ it('renders an 80mm page with the number as the largest thing on it', function (
     });
 
     $owner = $this->ownerOf($center['tenant']);
+    $slug = $center['registration']->requested_slug;
 
     /*
-     * A real web request, so the center is resolved from the SESSION the way a
-     * signed-in member of staff reaches it — `tenant` middleware runs before
-     * authentication, and the staff account lives in that center's database.
+     * A real web request on the center's own host, the way a signed-in member
+     * of staff reaches it since the Manager moved to `{center}.…/manager` —
+     * `tenant` middleware resolves the host before authentication, and the
+     * staff account lives in that center's database. (The old `/center/…`
+     * path no longer exists.)
      */
-    $html = (string) $this->withSession([
-        StanclTenantResolver::SESSION_KEY => $this->publicKeyOf($center['tenant']),
-        Auth::guard('web')->getName() => $owner->getAuthIdentifier(),
-    ])->get('/center/queue/tickets/'.$uuid.'/print')
-        ->assertStatus(200)
-        ->getContent();
+    $html = (string) $this->asCenter($center['tenant'], function () use ($owner, $slug, $uuid) {
+        $this->actingAs($owner);
+
+        return $this->get("http://{$slug}.localhost:8000/manager/queue/tickets/{$uuid}/print")
+            ->assertStatus(200)
+            ->getContent();
+    });
 
     expect($html)->toContain('L001')
         ->toContain('80mm')

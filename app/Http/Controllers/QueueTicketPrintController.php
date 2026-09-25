@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Kernel\Identity\Models\User;
+use App\Kernel\Tenancy\Contracts\TenantContext;
+use App\Modules\Printing\Application\PrintAppearance;
 use App\Modules\Queue\Application\TicketPrinter;
 use App\Modules\Queue\Domain\Models\QueueTicket;
 use Illuminate\Contracts\View\View;
@@ -33,8 +35,16 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  */
 final class QueueTicketPrintController extends Controller
 {
-    public function __invoke(Request $request, string $uuid, TicketPrinter $printer): View
+    /**
+     * `$center` is the host's `{center}` segment: route parameters reach a
+     * controller by POSITION, so it is taken first (otherwise the slug lands
+     * in `$uuid` and the ticket is never found). Tenancy already resolved the
+     * center from that host; the value itself is not used.
+     */
+    public function __invoke(Request $request, string $center, string $uuid, TicketPrinter $printer, PrintAppearance $appearance, TenantContext $tenants): View
     {
+        unset($center);
+
         /** @var User $user */
         $user = $request->user();
 
@@ -49,8 +59,18 @@ final class QueueTicketPrintController extends Controller
             throw new NotFoundHttpException;
         }
 
+        // The center's print appearance, applied at render time: the paper's
+        // language, its logo and closing line, and which optional lines show.
+        $locale = $appearance->documentLocale(app()->getLocale());
+        app()->setLocale($locale);
+        $print = $appearance->view($locale);
+
         // The Action checks the entitlement and `queue.ticket.print`; this
         // controller does not repeat either.
-        return view('queue.ticket', ['ticket' => $printer->payload($ticket, $user)]);
+        return view('queue.ticket', [
+            'ticket' => $appearance->ticket($printer->payload($ticket, $user, $locale), $print),
+            'print' => $print,
+            'centerName' => $tenants->require()->name,
+        ]);
     }
 }

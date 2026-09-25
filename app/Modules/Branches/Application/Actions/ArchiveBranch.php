@@ -35,16 +35,16 @@ final class ArchiveBranch
     public function __invoke(Branch $branch, User $actingUser): Branch
     {
         if (! $actingUser->hasPermission(Permission::BranchManage)) {
-            throw new AuthorizationException('You may not manage branches.');
+            throw new AuthorizationException(__('manager_staff.errors.branch_manage_denied'));
         }
 
         if (! $actingUser->branchScope()->allows($branch->id)) {
-            throw new AuthorizationException('You may not manage that branch.');
+            throw new AuthorizationException(__('manager_staff.errors.branch_denied'));
         }
 
         if ($branch->is_main) {
             throw ValidationException::withMessages([
-                'branch' => 'The main branch cannot be archived. Make another branch the main one first.',
+                'branch' => __('manager_staff.errors.branch_main_archive'),
             ]);
         }
 

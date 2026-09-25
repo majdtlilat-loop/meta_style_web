@@ -38,12 +38,22 @@
         .grand { font-size: 14pt; font-weight: 700; border-block-start: 2px solid #111; padding-block-start: 2mm; }
         .void-banner { border: 3px solid #b00; color: #b00; text-align: center; padding: 3mm; margin-block-end: 6mm; font-size: 16pt; }
         .thanks { margin-block-start: 10mm; color: #444; }
+        body[data-density="compact"] { font-size: 10pt; }
+        body[data-density="compact"] .lines th, body[data-density="compact"] .lines td { padding: 1.2mm 2mm; }
+        body[data-density="compact"] .identity, body[data-density="compact"] .print-head { margin-block-end: 4mm; }
+        .print-head .center { font-size: 20pt; }
 
         @media print { .no-print { display: none; } }
     </style>
+    @include('printing.styles')
 </head>
-<body>
+<body data-density="{{ $print['density'] }}">
+    {{-- The center's print appearance frames the invoice: its header and
+         footer replace the body's own; the lines and totals are the
+         immutable view model, untouched. --}}
+    @include('printing.header', ['print' => $print, 'doc' => $invoice])
     @include('sales.partials.invoice-body', ['invoice' => $invoice])
+    @include('printing.footer', ['print' => $print])
 
     <p class="no-print">
         <button type="button" onclick="window.print()">{{ __('invoice_public.print') }}</button>

@@ -68,6 +68,10 @@ final class TrialPolicy
             ['tenant_id' => $tenant->getTenantKey()],
             [
                 'plan_id' => $plan->id,
+                'price_minor_snapshot' => $plan->price_minor,
+                'currency_snapshot' => $plan->currency,
+                'billing_period_snapshot' => $plan->billing_period,
+                'plan_name_snapshot' => $plan->name->all(),
                 'status' => SubscriptionStatus::Trialing,
                 'trial_starts_at' => $now,
                 'trial_ends_at' => $now->copy()->addDays($days),

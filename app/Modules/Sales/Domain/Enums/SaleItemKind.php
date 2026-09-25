@@ -15,4 +15,12 @@ enum SaleItemKind: string
      * (docs/18-SALES.md §5).
      */
     case Custom = 'custom';
+
+    /**
+     * Something another module sells through the till — a membership plan, a
+     * service package — resolved through `Sales\Contracts\OfferingCatalog`.
+     * Sales prices and invoices it like any line and never knows what it is
+     * (docs/21-LOYALTY-MEMBERSHIPS-PACKAGES.md §§11, 15).
+     */
+    case Offering = 'offering';
 }

@@ -3,8 +3,9 @@
 declare(strict_types=1);
 
 use App\Kernel\Authorization\Permission;
-use App\Kernel\Tenancy\Infrastructure\StanclTenantResolver;
+use App\Kernel\Localization\TenantLocales;
 use App\Livewire\Center\PointOfSale;
+use App\Livewire\Center\PosSettings;
 use App\Livewire\Center\Sales as SalesScreen;
 use App\Modules\Catalog\Domain\Models\Product;
 use App\Modules\Sales\Application\Actions\AddSaleLine;
@@ -13,7 +14,6 @@ use App\Modules\Sales\Domain\Enums\SaleStatus;
 use App\Modules\Sales\Domain\Models\Invoice;
 use App\Modules\Sales\Domain\Models\Sale;
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Livewire\Livewire;
 
@@ -25,8 +25,8 @@ use Livewire\Livewire;
 | docs/18-SALES.md §§42–46.
 |
 | The API and the till call the same Actions. These drive both ends and assert
-| the outcome, not the implementation — and that there is no payment endpoint
-| anywhere to drive.
+| the outcome, not the implementation — and that no Sales surface answers a
+| money endpoint: since Phase 10 those belong to Payments.
 |
 */
 
@@ -121,8 +121,10 @@ it('drives a sale from empty cart to voided invoice through the API', function (
 
     expect($reissued)->toContain('/i/')->not->toBe($firstLink);
 
-    $this->get(parse_url($firstLink, PHP_URL_PATH))->assertStatus(404);
-    $this->get(parse_url($reissued, PHP_URL_PATH))->assertStatus(200);
+    // Phase 15: the public invoice lives on the center's own host, so the link
+    // is followed whole — host and path — the way a customer's phone opens it.
+    $this->get($firstLink)->assertStatus(404);
+    $this->get($reissued)->assertStatus(200);
 
     $this->withHeaders($headers)
         ->postJson("/api/v1/tenant/sales/{$uuid}/void", ['reason' => 'Rang up the wrong customer'])
@@ -157,7 +159,7 @@ it('checks a visit out through the API, once', function (): void {
         ->and($first->json('data.sale.lines.0.from_visit'))->toBeTrue();
 });
 
-it('keeps every sales route behind authentication, and offers no payment endpoint at all', function (): void {
+it('keeps every sales route behind authentication, and leaves every money endpoint to Payments', function (): void {
     $sales = collect(Route::getRoutes()->getRoutes())
         ->filter(fn ($route): bool => str_contains($route->uri(), 'sales')
             || str_contains($route->uri(), 'cashier-shifts')
@@ -173,11 +175,76 @@ it('keeps every sales route behind authentication, and offers no payment endpoin
         );
     }
 
-    // Settlement is Phase 10. Nothing in the route table may pretend otherwise.
-    $payments = collect(Route::getRoutes()->getRoutes())
-        ->filter(fn ($route): bool => preg_match('/pay|refund|settle|gateway|webhook|zaincash|fib|fastpay/i', $route->uri()) === 1);
+    /*
+     * Settlement exists since Phase 10 — and it is Payments', not Sales'. Every
+     * route that looks like money is served by a Payments surface (the public
+     * invoice page's "pay" form hands straight to Payments), and no Sales
+     * controller or Sales screen answers one (docs/19-PAYMENTS.md §4).
+     */
+    $owners = [
+        'App\Http\Controllers\Api\PaymentController',
+        'App\Http\Controllers\Api\GatewayAccountController',
+        'App\Http\Controllers\Api\PaymentWebhookController',
+        'App\Http\Controllers\Api\PublicPaymentController',
+        'App\Http\Controllers\PublicInvoicePageController@pay',
+        'App\Livewire\Center\PaymentGateways',
+    ];
 
-    expect($payments->map(fn ($route) => $route->uri())->values()->all())->toBe([]);
+    /*
+     * `webhook` is deliberately NOT one of the needles.
+     *
+     * It never caught anything here that the money words did not already catch
+     * — every gateway callback carries `payments` and `gateways` in its own
+     * path — while claiming jurisdiction over every OTHER module's callbacks.
+     * Phase 13's Meta endpoint
+     * (`api/v1/whatsapp/{center}/accounts/{account}/webhook`) carries no
+     * amount, settles nothing and is authenticated by Meta's signature
+     * (ADR-070); it is not this test's business. Matching on the word is the
+     * same mistake Phase 12's "no messaging channel" scan made by matching
+     * `whatsapp`, and it failed the same way: on a legitimate new route
+     * (docs/11-TESTING-STRATEGY.md §5).
+     */
+    $money = collect(Route::getRoutes()->getRoutes())
+        ->filter(fn ($route): bool => preg_match('/pay|refund|settle|gateway|zaincash|fib|fastpay/i', $route->uri()) === 1);
+
+    expect($money)->not->toBeEmpty();
+
+    /*
+     * Pinned, because it is the one money route a reader might expect the
+     * needles to miss. A refactor that moves the gateway callback to a path
+     * naming neither payments nor gateways fails HERE rather than silently
+     * leaving settlement unguarded.
+     */
+    expect($money->map(fn ($route): string => ltrim((string) $route->getActionName(), '\\'))->values()->all())
+        ->toContain('App\Http\Controllers\Api\PaymentWebhookController');
+
+    $strays = $money
+        ->reject(function ($route) use ($owners): bool {
+            $action = ltrim((string) $route->getActionName(), '\\');
+
+            foreach ($owners as $owner) {
+                if ($action === $owner || (! str_contains($owner, '@') && str_starts_with($action, $owner.'@'))) {
+                    return true;
+                }
+            }
+
+            return false;
+        })
+        ->map(fn ($route): string => $route->uri().' → '.$route->getActionName())
+        ->values()
+        ->all();
+
+    expect($strays)->toBe([]);
+
+    $salesAnswersMoney = collect(Route::getRoutes()->getRoutes())
+        ->filter(fn ($route): bool => str_contains((string) $route->getActionName(), 'SalesController')
+            || str_contains((string) $route->getActionName(), 'PointOfSale'))
+        ->filter(fn ($route): bool => preg_match('/pay|refund|settle|gateway|webhook/i', $route->uri()) === 1)
+        ->map(fn ($route): string => $route->uri())
+        ->values()
+        ->all();
+
+    expect($salesAnswersMoney)->toBe([]);
 });
 
 it('refuses sales work to a user without the permission', function (): void {
@@ -195,16 +262,16 @@ it('refuses sales work to a user without the permission', function (): void {
 it('renders the till and the sales list', function (): void {
     $center = $this->registerCenter();
     $owner = $this->ownerOf($center['tenant']);
+    $slug = $center['registration']->requested_slug;
 
-    $this->asCenter($center['tenant'], fn (): array => ssSeed());
+    $this->asCenter($center['tenant'], function () use ($owner, $slug): void {
+        ssSeed();
+        $this->actingAs($owner);
 
-    $session = [
-        StanclTenantResolver::SESSION_KEY => $this->publicKeyOf($center['tenant']),
-        Auth::guard('web')->getName() => $owner->getAuthIdentifier(),
-    ];
-
-    $this->withSession($session)->get('/center/pos')->assertOk()->assertSee('Till');
-    $this->withSession($session)->get('/center/sales')->assertOk()->assertSee('Sales');
+        // Phase 15 moved the Manager to the center's own host, under /manager.
+        $this->get("http://{$slug}.localhost:8000/manager/pos")->assertOk()->assertSee('Till');
+        $this->get("http://{$slug}.localhost:8000/manager/sales")->assertOk()->assertSee('Sales');
+    });
 });
 
 it('builds, finalizes and shows a sale from the till screen', function (): void {
@@ -294,26 +361,33 @@ it('voids a sale from the sales list with a reason', function (): void {
     });
 });
 
-it('lets a manager add a product and set a branch invoice prefix from the sales screen', function (): void {
+it('lets a manager add a product and set a branch invoice prefix from the POS settings', function (): void {
+    /*
+     * Relocated, not dropped: products and the invoice prefix moved from the
+     * sales list to their own POS settings page (Phase 15 Manager), which is
+     * where the invoice-prefix refusal already sent people ("A manager can set
+     * one in the POS settings"). Same Actions, same outcome.
+     */
     $center = $this->registerCenter();
 
     $this->asCenter($center['tenant'], function (): void {
         $seed = ssSeed();
         $owner = $this->ownerWithCatalogAccess();
+        $primary = app(TenantLocales::class)->default();
 
         $this->actingAs($owner, 'web');
 
-        Livewire::test(SalesScreen::class)
-            ->set('branch', $seed['branch']->uuid)
-            ->set('productName', 'Beard Oil')
+        Livewire::test(PosSettings::class)
+            ->call('newProduct')
+            ->set('productNames', [$primary => 'Beard Oil'])
             ->set('productPrice', '15000')
             ->set('productBarcode', '6291041500213')
-            ->call('addProduct')
+            ->call('saveProduct')
             ->assertSet('error', '')
-            ->set('invoicePrefix', 'bg')
-            ->call('setInvoicePrefix')
+            ->set('prefixes.'.$seed['branch']->uuid, 'bg')
+            ->call('savePrefix', $seed['branch']->uuid)
             ->assertSet('error', '')
-            ->assertSet('invoicePrefix', 'BG');
+            ->assertSet('prefixes.'.$seed['branch']->uuid, 'BG');
 
         expect(Product::query()->where('barcode', '6291041500213')->value('price_minor'))->toBe(15000)
             ->and($seed['branch']->fresh()?->invoice_prefix)->toBe('BG');

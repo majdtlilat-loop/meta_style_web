@@ -67,7 +67,7 @@ final class Entitlements
      * Call this inside Actions, not only in route middleware: WhatsApp
      * webhooks, RAYAN tool calls, queued jobs and console commands never pass
      * through HTTP middleware, and they are exactly the paths that will exist
-     * by Phase 13 (docs/05-ENTITLEMENTS.md §6.2).
+     * by Phase 14 (docs/05-ENTITLEMENTS.md §6.2).
      *
      * @throws EntitlementRequired
      */

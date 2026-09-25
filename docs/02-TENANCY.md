@@ -13,18 +13,33 @@ one business's customer data to another.
 of them, plus one control-plane database.
 
 ```
-meta_style_control      ← platform metadata, plans, subscriptions, SaaS billing
-tenant_000001           ← center #1 operational data
-tenant_000002           ← center #2 operational data
-tenant_000003           ← ...
+meta_style_control              ← platform metadata, plans, subscriptions, SaaS billing
+tenant_drbany_000005            ← a center provisioned after ADR-106
+tenant_barbershop_alpha_000006  ← another
+tenant_000001                   ← a center provisioned before ADR-106 (unchanged)
 ```
 
-Naming: `tenant_` + the zero-padded internal `tenants.sequence` (an
-`AUTO_INCREMENT` column, distinct from the public UUID `tenants.id`). The name
-is **generated once at provisioning time and then stored** in
-`tenants.tenancy_db_name`; it is read from the control plane thereafter, never
-recomputed and never derived from anything a user supplies (`DECISIONS.md`
-ADR-024).
+Naming (`DECISIONS.md` ADR-024, amended by ADR-106): `tenant_` + a **label** +
+`_` + the zero-padded internal `tenants.sequence` (an `AUTO_INCREMENT` column,
+distinct from the public UUID `tenants.id`).
+
+- The label is the center's **slug**, never its display name, reduced to
+  lowercase ASCII letters, digits and single underscores. Anything else — a
+  hyphen, a quote, a dot, a slash, a wildcard, Arabic — becomes a separator or
+  disappears; nothing left means the label `center`. At most 24 characters, cut
+  before the suffix, never leaving a trailing underscore. Registration passes
+  the center's slug; `metastyle:tenant:provision` takes `--slug` (canonical form
+  only). **No slug means the label `center`**, never anything from the name.
+- The **sequence suffix alone makes the name unique**: two centers whose slugs
+  reduce to the same label still get two databases. It is never truncated. The
+  whole name stays within MySQL's 64-character identifier limit.
+- The name is **generated once at provisioning time and then stored** in
+  `tenants.tenancy_db_name`. It is read from the control plane thereafter and
+  never recomputed: renaming a center or moving it to another address never
+  renames its database. Only `TenantProvisioningService` assigns it, and only
+  `TenantDatabaseName::generate()` produces one (architecture tests).
+- Databases provisioned before ADR-106 keep `tenant_000001`-style names, which
+  remain valid. Renaming them is a separate, approved migration.
 
 **Why database-per-tenant** (full rationale in `DECISIONS.md` ADR-002):
 
@@ -55,7 +70,7 @@ Exactly three, in priority order:
 | 1 | **Host** | Meta Style Web, customer web | `domains` lookup on the request host (subdomain or custom domain). **Live since Phase 2.** |
 | 2 | **Authenticated principal binding** | Staff mobile app, API clients | The token carries the center's public key and its row lives in that center's database. Server-resolved, never a client claim. **Live since Phase 3** (ADR-027). |
 | 2b | **Web session** | Meta Style Web | The center's public key, written to the signed session at login. Server-side state the browser cannot edit. **Live since Phase 3** (ADR-030). |
-| 3 | **Signed public key** | White-label apps, embedded menus, QR links | An opaque, revocable public key mapped to a tenant in the control plane. Grants access to public endpoints only. *Phase 17.* |
+| 3 | **Signed public key** | White-label apps, embedded menus, QR links | An opaque, revocable public key mapped to a tenant in the control plane. Grants access to public endpoints only. *Phase 18.* |
 
 If more than one source is present and they **disagree**, the request is
 rejected with `403` and a security audit event is written. Silent preference

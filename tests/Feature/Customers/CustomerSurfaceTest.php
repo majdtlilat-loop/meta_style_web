@@ -9,6 +9,7 @@ use App\Kernel\Localization\TranslatedText;
 use App\Kernel\Notes\NoteVisibility;
 use App\Kernel\Tenancy\Contracts\TenantContext;
 use App\Kernel\Tenancy\Infrastructure\StanclTenantResolver;
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Livewire\Center\Customers as CustomersPage;
 use App\Livewire\Customer\SignIn as CustomerSignInPage;
 use App\Modules\Customers\Application\CustomerPresenter;
@@ -347,8 +348,9 @@ it('keeps the electronic menu open to guests', function (): void {
         $this->seedCatalog();
     });
 
-    // Browsing the menu must never require a login (Phase 5 §24).
-    $this->get('/m/'.$this->publicKeyOf($center['tenant']))
+    // Browsing the menu must never require a login (Phase 5 §24). Since
+    // Phase 15 it is the center's own host, /list.
+    $this->get(app(PlatformHosts::class)->centerUrl($center['registration']->requested_slug, '/list'))
         ->assertOk()
         ->assertSee('Haircut');
 });

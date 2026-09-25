@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace App\Kernel\Http;
 
 use App\Kernel\Localization\Http\Middleware\SetLocale;
+use App\Kernel\Tenancy\Http\Middleware\ResolveLivewireTenant;
 use App\Kernel\Tenancy\Http\Middleware\ResolvePublicTenant;
 use App\Kernel\Tenancy\Http\Middleware\ResolveTenant;
 use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
+use Illuminate\Routing\Middleware\ThrottleRequests;
+use Illuminate\Routing\Middleware\ThrottleRequestsWithRedis;
 use Illuminate\Routing\Router;
 
 /**
@@ -77,6 +80,54 @@ final class MiddlewareOrderGuard
         }
 
         $this->assertLocaleFollowsResolution($priority, $tenant);
+        $this->assertLivewireResolvesFirst($priority, $anchor);
+    }
+
+    /**
+     * The Livewire resolver must also run before anything that reads the user.
+     *
+     * A THIRD silent ordering bug of the same family. `ResolveLivewireTenant`
+     * is appended to the `web` group, and Livewire's upload endpoint adds
+     * `throttle:60,1`, which keys on `$request->user()` — a staff user in the
+     * tenant database. With no priority entry the resolver sorted after the
+     * throttle, so the user was looked up with no tenant bound and every
+     * browser upload by a signed-in center user failed. `Livewire::test()` and
+     * an anonymous post never reach that lookup, so nothing turned red.
+     *
+     * @param  list<string>  $priority
+     */
+    private function assertLivewireResolvesFirst(array $priority, int $anchor): void
+    {
+        $livewire = array_search(ResolveLivewireTenant::class, $priority, true);
+
+        if ($livewire === false) {
+            throw new MiddlewareOrderViolation(sprintf(
+                '%s is absent from the middleware priority list, so it sorts after the '
+                .'throttle on Livewire\'s upload endpoint, which reads the signed-in user '
+                .'from the tenant database before a tenant is bound.',
+                ResolveLivewireTenant::class,
+            ));
+        }
+
+        $readers = [$anchor];
+
+        foreach ([ThrottleRequests::class, ThrottleRequestsWithRedis::class] as $throttle) {
+            $position = array_search($throttle, $priority, true);
+
+            if ($position !== false) {
+                $readers[] = $position;
+            }
+        }
+
+        if ($livewire > min($readers)) {
+            throw new MiddlewareOrderViolation(sprintf(
+                'Middleware priority runs %s (position %d) after middleware that reads the '
+                .'signed-in user (position %d), whose account lives in the tenant database.',
+                ResolveLivewireTenant::class,
+                $livewire,
+                min($readers),
+            ));
+        }
     }
 
     /**

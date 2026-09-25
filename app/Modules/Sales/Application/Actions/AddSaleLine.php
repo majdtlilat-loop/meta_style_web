@@ -7,7 +7,9 @@ namespace App\Modules\Sales\Application\Actions;
 use App\Kernel\Authorization\Permission;
 use App\Kernel\Identity\Models\User;
 use App\Modules\Sales\Application\JourneyChargeCandidates;
+use App\Modules\Sales\Application\LineEmployees;
 use App\Modules\Sales\Application\LinePriceResolver;
+use App\Modules\Sales\Application\Offerings;
 use App\Modules\Sales\Application\SaleLines;
 use App\Modules\Sales\Application\SalesAccess;
 use App\Modules\Sales\Application\SalesAudit;
@@ -21,7 +23,9 @@ use Illuminate\Auth\Access\AuthorizationException;
 
 /**
  * Adds a line to a draft: a service, a product, a performed stage of the sale's
- * own visit, or — with `sale.adjust` and a reason — a custom line.
+ * own visit, an offering another module sells (a membership plan, a service
+ * package — priced by its `OfferingCatalog`), or — with `sale.adjust` and a
+ * reason — a custom line.
  *
  * The price is resolved HERE, server-side, from the catalog or the visit's
  * snapshot. A browser can ask for "Haircut, Medium, with a wash"; it can never
@@ -33,13 +37,15 @@ final class AddSaleLine
         private readonly SalesAccess $access,
         private readonly LinePriceResolver $prices,
         private readonly JourneyChargeCandidates $candidates,
+        private readonly Offerings $offerings,
         private readonly SaleLines $lines,
         private readonly SaleMutation $mutation,
         private readonly SalesAudit $audit,
+        private readonly LineEmployees $employees,
     ) {}
 
     /**
-     * @param  array{kind: string, service?: string|null, variation?: string|null, addons?: list<string>, product?: string|null, stage?: string|null, name?: string|null, unit_price_minor?: int|null, reason?: string|null, quantity?: int|null, note?: string|null}  $input
+     * @param  array{kind: string, service?: string|null, variation?: string|null, addons?: list<string>, employee?: string|null, product?: string|null, stage?: string|null, name?: string|null, unit_price_minor?: int|null, reason?: string|null, quantity?: int|null, note?: string|null, offering_type?: string|null, offering?: string|null}  $input
      *
      * @throws SaleFailed
      * @throws AuthorizationException
@@ -60,13 +66,28 @@ final class AddSaleLine
             'product' => $this->prices->product($sale, (string) ($input['product'] ?? '')),
             'journey_stage' => $this->stage($sale, (string) ($input['stage'] ?? '')),
             'custom' => $this->prices->custom($sale, (string) ($input['name'] ?? ''), (int) ($input['unit_price_minor'] ?? -1)),
+            'offering' => $this->offerings->snapshot($sale, (string) ($input['offering_type'] ?? ''), (string) ($input['offering'] ?? '')),
             default => throw SaleFailed::policy('That is not something a sale can charge for.'),
         };
 
+        // Who performed a service rung up at the till — eligible, active and
+        // at this branch, as Booking would require. A visit line brings its
+        // own performer from the stage.
+        $employee = trim((string) ($input['employee'] ?? ''));
+
+        if ($employee !== '') {
+            if ($input['kind'] !== 'service') {
+                throw SaleFailed::policy('Only a service line records who performed it.');
+            }
+
+            $snapshot = $snapshot->withEmployee($this->employees->resolve($sale, $snapshot->serviceId, $employee));
+        }
+
         $quantity = (int) ($input['quantity'] ?? 1);
 
-        // A performed stage is one service, performed once.
-        if ($snapshot->journeyStageId !== null) {
+        // A performed stage is one service, performed once; a membership or a
+        // package is one per line, so it activates as exactly one thing.
+        if ($snapshot->journeyStageId !== null || $snapshot->offeringType !== null) {
             $quantity = 1;
         }
 
@@ -81,6 +102,7 @@ final class AddSaleLine
             'quantity' => $item->quantity,
             'unit_price_minor' => $item->unit_price_minor,
             'price_source' => $item->price_source->value,
+            'employee' => $employee === '' ? null : $employee,
         ], reason: $reason);
 
         return $item;

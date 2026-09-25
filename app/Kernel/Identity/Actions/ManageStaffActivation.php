@@ -14,6 +14,7 @@ use App\Kernel\Identity\Exceptions\InvalidActivationToken;
 use App\Kernel\Identity\Models\StaffActivationToken;
 use App\Kernel\Identity\Models\User;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
@@ -24,7 +25,7 @@ use Illuminate\Support\Str;
  * as that person, and every audit entry from that account becomes deniable.
  *
  * Phase 3 hands the link back to the manager to pass on directly. Delivery by
- * SMS or WhatsApp is Phase 13; standing up a notification provider purely to
+ * SMS or WhatsApp is Phase 14; standing up a notification provider purely to
  * carry these would be building a channel before there is anything to say.
  */
 final class ManageStaffActivation
@@ -76,23 +77,33 @@ final class ManageStaffActivation
      */
     public function redeem(string $plaintext, string $password): User
     {
-        $token = StaffActivationToken::query()
-            ->where('token_hash', StaffActivationToken::hash($plaintext))
-            ->usable()
-            ->first();
-
-        if (! $token instanceof StaffActivationToken) {
-            throw InvalidActivationToken::unusable();
-        }
-
         /** @var User $user */
-        $user = $token->user()->firstOrFail();
+        $user = DB::connection('tenant')->transaction(function () use ($plaintext, $password): User {
+            // Locked, then re-checked under the lock: two requests carrying the
+            // same link queue here, and the second finds it already used. A
+            // plain read-then-write would let both set a password.
+            $token = StaffActivationToken::query()
+                ->where('token_hash', StaffActivationToken::hash($plaintext))
+                ->lockForUpdate()
+                ->first();
 
-        // Single use, marked before the password is set so a concurrent second
-        // redemption cannot slip through.
-        $token->forceFill(['used_at' => Carbon::now()])->save();
+            if (! $token instanceof StaffActivationToken || ! $token->isUsable()) {
+                throw InvalidActivationToken::unusable();
+            }
 
-        ($this->changePassword)($user, $password, $this->actorFor($user));
+            $user = $token->user()->first();
+
+            // A disabled account cannot be brought back by an old link.
+            if (! $user instanceof User || ! $user->is_active) {
+                throw InvalidActivationToken::unusable();
+            }
+
+            $token->forceFill(['used_at' => Carbon::now()])->save();
+
+            ($this->changePassword)($user, $password, $this->actorFor($user));
+
+            return $user;
+        });
 
         $this->audit->record(new AuditEvent(
             action: 'identity.activation.redeemed',
@@ -104,6 +115,23 @@ final class ManageStaffActivation
         ));
 
         return $user;
+    }
+
+    /**
+     * The account a link would activate, or null — a read, for the page that
+     * asks for the new password. Never a substitute for {@see redeem()}, which
+     * re-checks everything under a lock.
+     */
+    public function pending(string $plaintext): ?User
+    {
+        $token = StaffActivationToken::query()
+            ->where('token_hash', StaffActivationToken::hash($plaintext))
+            ->usable()
+            ->first();
+
+        $user = $token?->user()->first();
+
+        return $user instanceof User && $user->is_active ? $user : null;
     }
 
     public function revokeOutstanding(User $user, string $reason, ?User $revokedBy = null): int

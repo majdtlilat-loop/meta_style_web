@@ -24,11 +24,12 @@ use Illuminate\Auth\Access\AuthorizationException;
  * ## Manual adjustments only
  *
  * Fixed and percentage discounts, fixed surcharges — each with `sale.adjust`,
- * a reason, and an audit row. No promo codes, no loyalty, no membership pricing:
- * those are engines with their own rules, arriving in their own phases. A
- * discount may take a sale to zero and never below it, which the pricing
- * service enforces inside the same transaction as the change
- * (docs/18-SALES.md §12).
+ * a reason, and an audit row. No promo codes. A customer's entitled benefit —
+ * points, a member's price, a package session — is not a manual discount: it
+ * arrives through `SaleBenefits` from the module that owns it, and this class
+ * neither adds nor removes one. A discount may take a sale to zero and never
+ * below it, which the pricing service enforces inside the same transaction as
+ * the change (docs/18-SALES.md §12).
  */
 final class AdjustSale
 {
@@ -49,6 +50,12 @@ final class AdjustSale
     public function add(Sale $sale, User $actingUser, AdjustmentType $type, int $value, string $reason): SaleAdjustment
     {
         $this->access->ensure($actingUser, Permission::SaleAdjust, $sale->branch_id, 'You may not apply discounts or surcharges.');
+
+        if ($type->isBenefit()) {
+            // A customer's benefit is applied by the module that owns it,
+            // through `SaleBenefits`, with its own record — never typed in.
+            throw SaleFailed::policy('A customer benefit is applied from their benefits, not as a manual discount.');
+        }
 
         $reason = trim($reason);
 
@@ -111,6 +118,12 @@ final class AdjustSale
                 throw SaleFailed::policy('That adjustment is not on this sale.');
             }
 
+            if ($adjustment->type->isBenefit()) {
+                // Deleting it here would leave the points spent or the package
+                // session used with nothing to show for it. Its owner withdraws it.
+                throw SaleFailed::policy('Withdraw a customer benefit from their benefits, so it is given back.');
+            }
+
             $summary = [
                 'adjustment' => $adjustment->uuid,
                 'type' => $adjustment->type->value,
@@ -151,6 +164,18 @@ final class AdjustSale
         $had = $sale->customer_id !== null;
 
         [$locked] = $this->mutation->apply($sale, function (Sale $locked) use ($customer): void {
+            $benefits = SaleAdjustment::query()
+                ->where('sale_id', $locked->getKey())
+                ->where('type', AdjustmentType::BenefitDiscount->value)
+                ->exists();
+
+            // A benefit belongs to the customer it was applied for — their
+            // points, their package. Changing whose sale this is underneath it
+            // would hand one customer's benefit to another.
+            if ($benefits && $locked->customer_id !== $customer?->id) {
+                throw SaleFailed::policy('Withdraw the customer\'s benefits before changing who the sale is for.');
+            }
+
             $locked->forceFill(['customer_id' => $customer?->id])->save();
         });
 

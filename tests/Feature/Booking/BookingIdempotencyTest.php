@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Kernel\Http\Middleware\EnsureIdempotency;
 use App\Kernel\Tenancy\Infrastructure\TenantModel;
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Modules\Booking\Domain\Models\Appointment;
 use App\Modules\Customers\Domain\Models\Customer;
 use Carbon\CarbonImmutable;
@@ -274,7 +275,9 @@ it('sweeps the centers it can reach when one of them is broken', function (): vo
 
 it('protects the public guest booking endpoint too', function (): void {
     $center = $this->registerCenter();
-    $key = $this->publicKeyOf($center['tenant']);
+    // The guest API lives on the center's own host since Phase 15.
+    $slug = $center['registration']->requested_slug;
+    $url = app(PlatformHosts::class)->centerUrl($slug, "/api/v1/menu/{$slug}/bookings");
 
     $seed = $this->asCenter($center['tenant'], fn (): array => $this->seedBookableCenter());
 
@@ -289,11 +292,11 @@ it('protects the public guest booking endpoint too', function (): void {
     $idempotencyKey = (string) Str::uuid();
 
     $first = $this->withHeaders(['Accept' => 'application/json', EnsureIdempotency::HEADER => $idempotencyKey])
-        ->postJson("/api/v1/menu/{$key}/bookings", $payload)
+        ->postJson($url, $payload)
         ->assertStatus(201);
 
     $second = $this->withHeaders(['Accept' => 'application/json', EnsureIdempotency::HEADER => $idempotencyKey])
-        ->postJson("/api/v1/menu/{$key}/bookings", $payload)
+        ->postJson($url, $payload)
         ->assertStatus(201);
 
     expect($second->json('data.uuid'))->toBe($first->json('data.uuid'));

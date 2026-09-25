@@ -2,6 +2,7 @@
 
 use App\Kernel\Tenancy\Infrastructure\DomainModel;
 use App\Kernel\Tenancy\Infrastructure\TenantModel;
+use App\Kernel\Tenancy\Infrastructure\TenantStorageBootstrapper;
 use Stancl\Tenancy\Bootstrappers\CacheTenancyBootstrapper;
 use Stancl\Tenancy\Bootstrappers\DatabaseTenancyBootstrapper;
 use Stancl\Tenancy\Bootstrappers\FilesystemTenancyBootstrapper;
@@ -37,10 +38,9 @@ return [
     /*
      * Hosts that belong to Meta Style itself rather than to a tenant.
      */
-    'central_domains' => [
-        'localhost',
-        '127.0.0.1',
-    ],
+    // Filled from APP_URL through PlatformHosts in TenancyServiceProvider so
+    // tenancy and HTTP routing share one host authority.
+    'central_domains' => [],
 
     /*
      * Executed when tenancy is initialised, and reverted when it ends.
@@ -51,6 +51,9 @@ return [
         DatabaseTenancyBootstrapper::class,
         CacheTenancyBootstrapper::class,
         FilesystemTenancyBootstrapper::class,
+        // After the filesystem one: gives the suffixed storage path the
+        // directory Laravel's real-time facades are written to.
+        TenantStorageBootstrapper::class,
         QueueTenancyBootstrapper::class,
     ],
 
@@ -70,8 +73,8 @@ return [
 
         /*
          * Fallback name generator. In practice it is never used: Meta Style
-         * always assigns `tenancy_db_name` explicitly from the tenant sequence
-         * before the database is created.
+         * always assigns `tenancy_db_name` explicitly (TenantDatabaseName, from
+         * the slug and the tenant sequence) before the database is created.
          */
         'prefix' => 'tenant_',
         'suffix' => '',

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Modules\Booking\Application\Actions\CreateAppointment;
 use App\Modules\Booking\Contracts\BookingEngine;
 use App\Modules\Booking\Domain\Data\BookingActor;
@@ -57,7 +58,7 @@ function plBook(array $seed, array $lines, string $time = '10:00'): Appointment
             customer: CustomerRef::details('Sara Ahmed', '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 it('lays a booking out back to back when no offset is given', function (): void {
@@ -284,14 +285,15 @@ it('preserves the shape of a visit when it is moved', function (): void {
 
 it('keeps public booking sequential, whatever the request says', function (): void {
     $center = $this->registerCenter();
-    $key = $this->publicKeyOf($center['tenant']);
+    // The guest API lives on the center's own host since Phase 15.
+    $slug = $center['registration']->requested_slug;
 
     $seed = $this->asCenter($center['tenant'], fn (): array => plSeed());
 
     $response = $this->withHeaders([
         'Accept' => 'application/json',
         'Idempotency-Key' => (string) Str::uuid(),
-    ])->postJson("/api/v1/menu/{$key}/bookings", [
+    ])->postJson(app(PlatformHosts::class)->centerUrl($slug, "/api/v1/menu/{$slug}/bookings"), [
         'branch' => $seed['branch']->uuid,
         'starts_at' => $this->localTime($seed['branch'], plDate(), '10:00')->toIso8601String(),
         'services' => [

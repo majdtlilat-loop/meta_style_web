@@ -36,4 +36,16 @@ return [
     'destination' => 'Go to',
     'issued_at' => 'Issued',
     'thank_you' => 'Thank you for waiting.',
+
+    // The state beside a recent call, and the Manager preview's sample.
+    'state_called' => 'Called',
+    'state_serving' => 'In service',
+    'sample_call' => 'Sample',
+
+    // Screen controls: this screen only, never the queue.
+    'start' => 'Start screen',
+    'start_hint' => 'One touch turns on the sound and full screen.',
+    'controls' => 'Screen controls',
+    'fullscreen' => 'Full screen',
+    'exit_fullscreen' => 'Exit full screen',
 ];

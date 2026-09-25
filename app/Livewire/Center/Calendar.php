@@ -5,618 +5,382 @@ declare(strict_types=1);
 namespace App\Livewire\Center;
 
 use App\Kernel\Authorization\Permission;
+use App\Kernel\Entitlements\Entitlements;
 use App\Kernel\Identity\Models\User;
-use App\Kernel\Notes\NoteVisibility;
-use App\Modules\Booking\Application\Actions\ManageAppointmentNotes;
+use App\Kernel\Time\BranchClock;
+use App\Livewire\Center\Booking\Support\BookingFormat;
+use App\Livewire\Center\Booking\Support\CalendarBoard;
+use App\Livewire\Center\Booking\Support\DeskData;
+use App\Livewire\Center\Booking\Support\DeskRange;
+use App\Livewire\Center\Concerns\RequiresFeature;
 use App\Modules\Booking\Application\AppointmentPresenter;
+use App\Modules\Booking\Application\BookingOptions;
 use App\Modules\Booking\Application\CalendarQuery;
-use App\Modules\Booking\Contracts\BookingEngine;
-use App\Modules\Booking\Domain\Availability\AvailabilityEngine;
-use App\Modules\Booking\Domain\Data\AvailabilityQuery;
-use App\Modules\Booking\Domain\Data\AvailabilitySlot;
-use App\Modules\Booking\Domain\Data\BookingActor;
-use App\Modules\Booking\Domain\Data\BookingLine;
-use App\Modules\Booking\Domain\Data\BookingRequest;
-use App\Modules\Booking\Domain\Data\CustomerRef;
 use App\Modules\Booking\Domain\Enums\AppointmentStatus;
-use App\Modules\Booking\Domain\Exceptions\BookingFailed;
-use App\Modules\Booking\Domain\Models\Appointment;
-use App\Modules\Branches\Domain\Models\Branch;
-use App\Modules\Catalog\Domain\Models\Service;
-use App\Modules\Customers\Application\CustomerQuery;
-use App\Modules\Customers\Domain\Models\Customer;
-use App\Modules\Employees\Domain\Models\Employee;
 use Carbon\CarbonImmutable;
-use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Contracts\View\View;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\On;
 use Livewire\Attributes\Url;
 use Livewire\Component;
+use Livewire\WithPagination;
 
 /**
- * The staff calendar, and the booking desk.
+ * The bookings desk: day, week and list, and the drawers that act on them.
  *
- * ## A table, not a calendar library
+ * ## A page, three children
  *
- * Day and week views are rendered as ordinary HTML tables. A JavaScript
- * calendar would need its own tenant-aware endpoint, its own RTL handling and
- * its own build step to draw what Blade already draws — and this product must
- * work in Arabic, Kurdish and English, right to left and left to right, on a
- * phone in a salon. Logical CSS properties do that for free; a canvas-based
- * calendar does not (docs/13-ROADMAP.md Phase 6 §23).
+ * This component owns only what the URL says — the date, the view, the
+ * filters — and draws the book. Making a booking is
+ * {@see Booking\Composer}; reading and acting on one is
+ * {@see Booking\AppointmentPanel} (which hosts {@see Booking\RescheduleForm}).
+ * They talk through events carrying a uuid and nothing else — a one-time
+ * verification code never leaves the composer that minted it
+ * (docs/24-BOOKING-VERIFICATION.md §11).
  *
  * ## Nothing here decides anything
  *
- * Availability comes from {@see AvailabilityEngine}; every mutation goes
- * through {@see BookingEngine}. This component gathers input and renders a
- * result. If a rule appeared in this file it would be a rule the API and the
- * public form did not have (docs/04-MODULE-BOUNDARIES.md §4.1).
+ * Every appointment is read through {@see CalendarQuery} (permission, branch
+ * scope and own scope in the SQL) and presented by {@see AppointmentPresenter}
+ * (masking), via {@see DeskData}. Every change goes through the Booking Engine
+ * or a Booking Action in a child. {@see CalendarBoard} only does geometry
+ * (docs/15-BOOKING.md §1). This class never names the Appointment model.
  *
- * Masking is not done here either: every appointment is rendered through
- * {@see AppointmentPresenter}, which is what the API uses (ADR-042).
+ * ## After a downgrade
+ *
+ * Reading survives, writing does not (§14): a center that no longer owns
+ * `booking` but has a history keeps this page read-only with a compact notice;
+ * one that never had a booking sees the upgrade page and loads nothing.
  */
 #[Layout('components.layouts.app')]
 final class Calendar extends Component
 {
+    use RequiresFeature;
+    use WithPagination;
+
+    private const VIEWS = ['day', 'week', 'list'];
+
     #[Url]
     public string $date = '';
 
-    /** `day` or `week`. Month is deliberately absent — see the view. */
+    /** `day`, `week` or `list`. */
     #[Url]
     public string $view = 'day';
 
+    /** Day view lanes: `team` or `rooms`. */
+    #[Url]
+    public string $lanes = 'team';
+
+    /** A branch uuid, or `all`. */
     #[Url(as: 'branch')]
     public string $branchUuid = '';
 
     #[Url(as: 'employee')]
     public string $employeeUuid = '';
 
+    #[Url(as: 'service')]
+    public string $serviceUuid = '';
+
     #[Url(as: 'status')]
     public string $statusFilter = '';
 
-    /** Show only appointments whose assigned employee is now inactive. */
+    /** A booking reference or a customer. */
+    #[Url(as: 'q')]
+    public string $search = '';
+
+    /** The list view's last day. */
+    #[Url(as: 'to')]
+    public string $until = '';
+
+    /** Future bookings whose team member is no longer active (§17). */
     #[Url]
     public bool $affected = false;
 
-    // ------------------------------------------------------------ booking form
-
-    public bool $booking = false;
-
-    public string $customerSearch = '';
-
-    public string $customerUuid = '';
-
-    public string $newCustomerName = '';
-
-    public string $newCustomerPhone = '';
-
-    public string $serviceUuid = '';
-
-    public string $variationUuid = '';
-
-    /** @var list<string> */
-    public array $addonUuids = [];
-
-    public string $bookingEmployeeUuid = '';
-
-    public string $bookingDate = '';
-
-    public string $bookingNote = '';
-
-    /** @var list<array<string, string>> */
-    public array $slots = [];
-
-    // -------------------------------------------------------------- appointment
-
+    /** The open appointment, so a link can land on it. */
+    #[Url(as: 'appointment')]
     public ?string $viewing = null;
 
-    public bool $rescheduling = false;
+    /** The new-booking drawer, so "New booking" elsewhere can open it. */
+    #[Url(as: 'new')]
+    public bool $composing = false;
 
-    public string $noteBody = '';
+    /** Remounts the composer fresh each time it opens. */
+    public int $composerRun = 0;
 
-    public string $noteVisibility = 'internal';
-
-    public string $cancelReason = '';
-
-    public string $notice = '';
-
-    public string $error = '';
+    /** @var list<array{uuid: string, name: string, timezone: string}>|null per request, never serialised */
+    private ?array $branchList = null;
 
     public function mount(): void
     {
-        $this->date = $this->date !== '' ? $this->date : CarbonImmutable::now()->format('Y-m-d');
-        $this->bookingDate = $this->date;
+        $user = $this->viewer();
+
+        abort_unless($user->hasPermission(Permission::AppointmentView) || $user->hasPermission(Permission::AppointmentViewOwn), 403);
+
+        $this->view = in_array($this->view, self::VIEWS, true) ? $this->view : 'day';
+        $this->lanes = $this->lanes === 'rooms' ? 'rooms' : 'team';
+        $this->keepBranchInScope();
+        $this->date = DeskRange::validDate($this->date) ?? $this->todayLocal();
+        $this->until = DeskRange::listEnd($this->view, $this->date, DeskRange::validDate($this->until) ?? '');
+        $this->affected = $this->affected && $user->hasPermission(Permission::AppointmentView);
     }
 
-    // ------------------------------------------------------------- navigation
+    // ------------------------------------------------------------ navigation
 
-    public function move(int $days): void
+    public function move(int $steps): void
     {
+        $days = $steps * $this->range()->step();
+
         $this->date = CarbonImmutable::parse($this->date)->addDays($days)->format('Y-m-d');
-        $this->viewing = null;
+
+        if ($this->view === 'list') {
+            $this->until = CarbonImmutable::parse($this->until)->addDays($days)->format('Y-m-d');
+        }
+
+        $this->resetPage();
     }
 
-    public function today(): void
+    public function goToday(): void
     {
-        $this->date = CarbonImmutable::now()->format('Y-m-d');
-        $this->viewing = null;
+        $this->date = $this->todayLocal();
+        $this->until = DeskRange::listEnd($this->view, $this->date, '');
+        $this->resetPage();
     }
 
     public function setView(string $view): void
     {
-        $this->view = $view === 'week' ? 'week' : 'day';
-        $this->viewing = null;
+        $this->view = in_array($view, self::VIEWS, true) ? $view : 'day';
+        $this->until = DeskRange::listEnd($this->view, $this->date, $this->until);
+        $this->resetPage();
     }
 
-    // ---------------------------------------------------------------- booking
+    /** From a week column's heading to that day. */
+    public function openDay(string $date): void
+    {
+        $this->date = DeskRange::validDate($date) ?? $this->date;
+        $this->view = 'day';
+        $this->resetPage();
+    }
+
+    public function setLanes(string $lanes): void
+    {
+        $this->lanes = $lanes === 'rooms' ? 'rooms' : 'team';
+    }
+
+    public function setStatus(string $status): void
+    {
+        $this->statusFilter = AppointmentStatus::tryFrom($status) instanceof AppointmentStatus ? $status : '';
+        $this->resetPage();
+    }
+
+    public function updated(string $property): void
+    {
+        if ($property === 'date' || $property === 'until') {
+            $this->date = DeskRange::validDate($this->date) ?? $this->todayLocal();
+            $this->until = DeskRange::listEnd($this->view, $this->date, DeskRange::validDate($this->until) ?? '');
+        }
+
+        if ($property === 'branchUuid') {
+            $this->keepBranchInScope();
+            // Another branch has another team and another menu.
+            $this->employeeUuid = '';
+            $this->serviceUuid = '';
+        }
+
+        $this->resetPage();
+    }
+
+    public function clearFilters(): void
+    {
+        $this->employeeUuid = '';
+        $this->serviceUuid = '';
+        $this->statusFilter = '';
+        $this->search = '';
+        $this->affected = false;
+        $this->resetPage();
+    }
+
+    // --------------------------------------------------------------- drawers
 
     public function startBooking(): void
     {
-        $this->resetBookingForm();
-        $this->booking = true;
         $this->viewing = null;
-        $this->bookingDate = $this->date;
+        $this->composing = true;
+        $this->composerRun++;
     }
 
-    public function cancelBooking(): void
+    #[On('booking-composer-closed')]
+    public function closeComposer(): void
     {
-        $this->booking = false;
-        $this->resetBookingForm();
+        $this->composing = false;
     }
 
-    /**
-     * Selects an existing customer from the search results.
-     */
-    public function chooseCustomer(string $uuid): void
-    {
-        $this->customerUuid = $uuid;
-        $this->newCustomerName = '';
-        $this->newCustomerPhone = '';
-    }
-
-    public function findSlots(AvailabilityEngine $engine): void
-    {
-        $this->slots = [];
-        $this->error = '';
-
-        if ($this->serviceUuid === '' || $this->branchUuid === '') {
-            $this->error = __('Choose a branch and a service first.');
-
-            return;
-        }
-
-        try {
-            $found = $engine->slots(
-                new AvailabilityQuery(
-                    branchUuid: $this->branchUuid,
-                    lines: [$this->line()],
-                    fromDate: $this->bookingDate,
-                    toDate: $this->bookingDate,
-                ),
-                publicChannel: false,
-            );
-        } catch (BookingFailed $e) {
-            $this->error = $e->getMessage();
-
-            return;
-        }
-
-        $this->slots = array_map(
-            static fn (AvailabilitySlot $slot): array => [
-                'starts_at' => $slot->startsAt->toIso8601String(),
-                'time' => $slot->localTime,
-            ],
-            $found,
-        );
-
-        if ($this->slots === []) {
-            $this->error = __('Nothing is available that day.');
-        }
-    }
-
-    public function book(string $startsAt, BookingEngine $engine): void
-    {
-        $this->error = '';
-
-        try {
-            $appointment = $engine->book(
-                new BookingRequest(
-                    branchUuid: $this->branchUuid,
-                    lines: [$this->line()],
-                    startsAt: CarbonImmutable::parse($startsAt)->utc(),
-                    customer: $this->customerRef(),
-                    customerNote: $this->bookingNote === '' ? null : $this->bookingNote,
-                ),
-                BookingActor::staff($this->user()),
-            );
-        } catch (BookingFailed|AuthorizationException $e) {
-            $this->error = $e->getMessage();
-
-            return;
-        }
-
-        $this->booking = false;
-        $this->resetBookingForm();
-        $this->viewing = $appointment->uuid;
-        $this->date = $appointment->localDate();
-        $this->notice = __('Booked.');
-    }
-
-    // ------------------------------------------------------------- lifecycle
-
+    #[On('open-appointment')]
     public function open(string $uuid): void
     {
+        $this->composing = false;
         $this->viewing = $uuid;
-        $this->booking = false;
-        $this->rescheduling = false;
-        $this->error = '';
     }
 
-    public function close(): void
+    #[On('booking-panel-closed')]
+    public function closePanel(): void
     {
         $this->viewing = null;
-        $this->rescheduling = false;
     }
 
-    public function confirm(BookingEngine $engine): void
-    {
-        $this->transition($engine, AppointmentStatus::Confirmed, __('Confirmed.'));
-    }
-
-    public function complete(BookingEngine $engine): void
-    {
-        $this->transition($engine, AppointmentStatus::Completed, __('Marked completed.'));
-    }
-
-    public function noShow(BookingEngine $engine): void
-    {
-        $this->transition($engine, AppointmentStatus::NoShow, __('Marked as a no-show.'));
-    }
-
-    public function cancel(BookingEngine $engine): void
-    {
-        $appointment = $this->current();
-
-        if (! $appointment instanceof Appointment) {
-            return;
-        }
-
-        try {
-            $engine->cancel(
-                $appointment,
-                BookingActor::staff($this->user()),
-                $this->cancelReason === '' ? null : $this->cancelReason,
-            );
-        } catch (BookingFailed|AuthorizationException $e) {
-            $this->error = $e->getMessage();
-
-            return;
-        }
-
-        $this->cancelReason = '';
-        $this->notice = __('Cancelled.');
-    }
-
-    public function startReschedule(AvailabilityEngine $engine): void
-    {
-        $appointment = $this->current();
-
-        if (! $appointment instanceof Appointment) {
-            return;
-        }
-
-        $this->rescheduling = true;
-        $this->bookingDate = $appointment->localDate();
-        $this->branchUuid = (string) $appointment->branch()->value('uuid');
-
-        $this->slotsForExisting($appointment, $engine);
-    }
-
-    public function rescheduleTo(string $startsAt, BookingEngine $engine): void
-    {
-        $appointment = $this->current();
-
-        if (! $appointment instanceof Appointment) {
-            return;
-        }
-
-        try {
-            $engine->reschedule(
-                $appointment,
-                CarbonImmutable::parse($startsAt)->utc(),
-                BookingActor::staff($this->user()),
-            );
-        } catch (BookingFailed|AuthorizationException $e) {
-            $this->error = $e->getMessage();
-
-            return;
-        }
-
-        $this->rescheduling = false;
-        $this->slots = [];
-        $this->date = $appointment->refresh()->localDate();
-        $this->notice = __('Moved.');
-    }
-
-    public function addNote(ManageAppointmentNotes $notes): void
-    {
-        $appointment = $this->current();
-
-        if (! $appointment instanceof Appointment) {
-            return;
-        }
-
-        try {
-            $notes->add(
-                $appointment,
-                $this->noteBody,
-                $this->user(),
-                NoteVisibility::tryFrom($this->noteVisibility) ?? NoteVisibility::Internal,
-            );
-        } catch (\Throwable $e) {
-            $this->error = $e->getMessage();
-
-            return;
-        }
-
-        $this->noteBody = '';
-        $this->notice = __('Note saved.');
-    }
+    /** A child changed the book; this render redraws it. Also the poll target. */
+    #[On('booking-created')]
+    #[On('appointment-changed')]
+    public function refreshBoard(): void {}
 
     // ------------------------------------------------------------------ render
 
-    public function render(
-        CalendarQuery $calendar,
-        AppointmentPresenter $presenter,
-    ): mixed {
-        $user = $this->user();
+    public function render(CalendarQuery $calendar, DeskData $data, BookingOptions $options, Entitlements $entitlements): View
+    {
+        $user = $this->viewer();
 
-        $branches = Branch::query()->active()->orderBy('sort_order')->orderBy('id')->get();
+        // Never owned `booking` and never booked anything: the upgrade page,
+        // and no data is loaded (§14).
+        $offer = $this->lockedFeature('booking');
 
-        // Default to the first branch in scope rather than "all": a day view
-        // mixing two branches' schedules is unreadable, and reception works at
-        // one desk.
-        $first = $branches->first();
-
-        if ($this->branchUuid === '' && $first instanceof Branch) {
-            $this->branchUuid = (string) $first->uuid;
+        if ($offer !== null && ! $calendar->hasHistory()) {
+            return view('livewire.center.feature-locked', ['offer' => $offer])->title(__('manager_booking.title'));
         }
 
-        [$from, $to] = $this->range();
+        $branch = in_array($this->branchUuid, ['', 'all'], true) ? null : $this->branchUuid;
+        $broad = $user->hasPermission(Permission::AppointmentView);
+        $affected = $this->affected && $broad;
+        $range = $this->range();
 
-        $appointments = collect();
-        $error = $this->error;
+        $book = $data->load($user, $range, [
+            'branch' => $branch,
+            'employee' => $this->employeeUuid !== '' ? $this->employeeUuid : null,
+            'service' => $this->serviceUuid !== '' ? $this->serviceUuid : null,
+            'status' => $this->statusFilter !== '' ? $this->statusFilter : null,
+            'search' => trim($this->search) !== '' ? $this->search : null,
+            'with_resources' => $this->view === 'day' && $this->lanes === 'rooms',
+        ], $affected);
 
-        try {
-            $appointments = $this->affected
-                ? $calendar->affectedByInactiveEmployees($user)
-                : $calendar->forRange($from, $to, $user, [
-                    'branch' => $this->branchUuid ?: null,
-                    'employee' => $this->employeeUuid ?: null,
-                    'status' => $this->statusFilter ?: null,
-                ]);
-        } catch (BookingFailed|AuthorizationException $e) {
-            $error = $e->getMessage();
-        }
-
-        $viewing = $this->current();
+        $team = $options->team($user, $branch);
+        $rooms = $options->rooms($user, $branch);
+        $today = $this->todayLocal();
 
         return view('livewire.center.calendar', [
-            'branches' => $branches,
-            'employees' => Employee::query()->orderBy('id')->get(),
-            'services' => Service::query()->active()->with('variations', 'addons')->get(),
-            'appointments' => $appointments->map(
-                fn (Appointment $a): array => $presenter->summary($a, $user)
-            )->values()->all(),
-            // NOT named `viewing`: this component already has a public
-            // `$viewing` property holding the uuid, and a public property wins
-            // over view data of the same name — so the template would silently
-            // receive the string instead of the presented appointment.
-            'openAppointment' => $viewing instanceof Appointment
-                ? $presenter->detail(
-                    $viewing->load(['customer', 'branch', 'items.employee', 'items.addons', 'internalNotes']),
-                    $user,
-                )
-                : null,
-            'days' => $this->days(),
-            'customers' => $this->customerResults($user),
-            'canBook' => $user->hasPermission(Permission::AppointmentCreate),
-            'canNote' => $user->hasPermission(Permission::AppointmentNoteManage),
-            'error' => $error,
-        ]);
+            'offer' => $offer,
+            'readOnly' => $offer !== null || ! $entitlements->enabled('booking'),
+            'branches' => $this->branches(),
+            'team' => $team,
+            'services' => $this->serviceOptions($options, $user, $branch),
+            'hasRooms' => $rooms !== [],
+            'rows' => $book['rows'],
+            'page' => $book['page'],
+            'board' => $affected || $this->view !== 'day' ? null : CalendarBoard::day(
+                $book['rows'],
+                $this->lanes === 'rooms' ? $rooms : $team,
+                $branch !== null ? $options->openHours($branch, $this->date, $user) : [],
+                $this->date,
+                $this->lanes === 'rooms' ? 'rooms' : 'team',
+                ! $broad || $this->employeeUuid !== '',
+                $this->date === $today ? $this->nowMinute() : null,
+            ),
+            'week' => $affected || $this->view !== 'week' ? [] : CalendarBoard::week($range->days(), $book['rows'], $today),
+            'total' => array_sum($book['counts']),
+            'statusOptions' => array_map(static fn (string $status): array => [
+                'value' => $status,
+                'label' => BookingFormat::status($status),
+                'count' => $book['counts'][$status] ?? 0,
+            ], AppointmentStatus::values()),
+            'error' => $book['error'],
+            'canCreate' => $entitlements->enabled('booking') && $user->hasPermission(Permission::AppointmentCreate),
+            'canSeeAffected' => $broad,
+            'canSearchContact' => $user->hasPermission(Permission::CustomerContactView),
+            'hasFilters' => $this->employeeUuid !== '' || $this->serviceUuid !== '' || $this->statusFilter !== '' || trim($this->search) !== '' || $affected,
+            'heading' => $range->heading(),
+            'isToday' => $this->date === $today,
+            'composerBranch' => $branch ?? ($this->branches()[0]['uuid'] ?? ''),
+        ])->title(__('manager_booking.title'));
     }
 
     // -------------------------------------------------------------- internals
 
-    /**
-     * @return array{0: string, 1: string}
-     */
-    private function range(): array
+    private function range(): DeskRange
     {
-        $date = CarbonImmutable::parse($this->date);
-
-        if ($this->view !== 'week') {
-            return [$date->format('Y-m-d'), $date->format('Y-m-d')];
-        }
-
-        // Weeks start on Saturday in Iraq. Hardcoding Monday would put the
-        // weekend in the middle of the grid for every center in the launch
-        // market.
-        $start = $date->subDays(($date->dayOfWeek + 1) % 7);
-
-        return [$start->format('Y-m-d'), $start->addDays(6)->format('Y-m-d')];
+        return new DeskRange($this->view, $this->date, $this->until);
     }
 
     /**
-     * @return list<string>
-     */
-    private function days(): array
-    {
-        [$from, $to] = $this->range();
-
-        $days = [];
-        $cursor = CarbonImmutable::parse($from);
-        $last = CarbonImmutable::parse($to);
-
-        while ($cursor <= $last) {
-            $days[] = $cursor->format('Y-m-d');
-            $cursor = $cursor->addDay();
-        }
-
-        return $days;
-    }
-
-    private function line(): BookingLine
-    {
-        return new BookingLine(
-            serviceUuid: $this->serviceUuid,
-            variationUuid: $this->variationUuid === '' ? null : $this->variationUuid,
-            addonUuids: $this->addonUuids,
-            employeeUuid: $this->bookingEmployeeUuid === '' ? null : $this->bookingEmployeeUuid,
-        );
-    }
-
-    /**
-     * @throws BookingFailed
-     */
-    private function customerRef(): CustomerRef
-    {
-        if ($this->customerUuid !== '') {
-            return CustomerRef::existing($this->customerUuid);
-        }
-
-        if (trim($this->newCustomerName) === '' || trim($this->newCustomerPhone) === '') {
-            throw BookingFailed::policy(__('Choose a customer, or enter a name and phone number.'));
-        }
-
-        return CustomerRef::details($this->newCustomerName, $this->newCustomerPhone);
-    }
-
-    /**
-     * Slots for the appointment currently being rescheduled.
-     *
-     * Rebuilt from the STORED items, so a service whose duration changed since
-     * the booking still offers slots that match what was agreed (§3).
-     */
-    private function slotsForExisting(Appointment $appointment, AvailabilityEngine $engine): void
-    {
-        $lines = $appointment->items()->with('service')->get()
-            ->map(fn ($item): ?BookingLine => $item->service === null ? null : new BookingLine(
-                serviceUuid: $item->service->uuid,
-                variationUuid: null,
-                addonUuids: [],
-                employeeUuid: $item->wasCustomerChoice() ? $item->employee?->uuid : null,
-            ))
-            ->filter()
-            ->values()
-            ->all();
-
-        if ($lines === []) {
-            $this->error = __('That appointment cannot be moved automatically.');
-
-            return;
-        }
-
-        try {
-            $found = $engine->slots(
-                new AvailabilityQuery(
-                    branchUuid: $this->branchUuid,
-                    lines: $lines,
-                    fromDate: $this->bookingDate,
-                    toDate: $this->bookingDate,
-                ),
-                publicChannel: false,
-            );
-        } catch (BookingFailed $e) {
-            $this->error = $e->getMessage();
-
-            return;
-        }
-
-        $this->slots = array_map(
-            static fn (AvailabilitySlot $slot): array => [
-                'starts_at' => $slot->startsAt->toIso8601String(),
-                'time' => $slot->localTime,
-            ],
-            $found,
-        );
-    }
-
-    /**
-     * Customer search results — through the CRM query, so masking and the
-     * contact-search permission apply exactly as they do in the CRM screen
-     * (ADR-042).
+     * The service filter's choices: the chosen branch's menu, or each
+     * in-scope branch's menu once when the desk shows all of them.
      *
      * @return list<array{uuid: string, name: string}>
      */
-    private function customerResults(User $user): array
+    private function serviceOptions(BookingOptions $options, User $user, ?string $branch): array
     {
-        if (! $this->booking || trim($this->customerSearch) === '') {
-            return [];
+        $found = [];
+
+        foreach ($branch !== null ? [$branch] : array_column($this->branches(), 'uuid') as $uuid) {
+            foreach ($options->services($uuid, $user) as $service) {
+                $found[$service['uuid']] ??= ['uuid' => $service['uuid'], 'name' => $service['name']];
+            }
         }
 
-        if (! $user->hasPermission(Permission::CustomerView)) {
-            return [];
-        }
-
-        $page = app(CustomerQuery::class)->paginate(['search' => $this->customerSearch], $user, 8);
-
-        return array_map(
-            static fn (Customer $c): array => ['uuid' => $c->uuid, 'name' => $c->name],
-            $page->items(),
-        );
+        return array_values($found);
     }
 
-    private function transition(BookingEngine $engine, AppointmentStatus $target, string $notice): void
+    /**
+     * The first branch in scope unless a branch in scope (or "all", for a
+     * viewer with more than one) was asked for: a day mixing two branches'
+     * schedules is unreadable, and reception works at one desk.
+     */
+    private function keepBranchInScope(): void
     {
-        $appointment = $this->current();
+        $uuids = array_column($this->branches(), 'uuid');
 
-        if (! $appointment instanceof Appointment) {
+        if (($this->branchUuid === 'all' && count($uuids) > 1) || in_array($this->branchUuid, $uuids, true)) {
             return;
         }
 
-        try {
-            $engine->transition($appointment, $target, BookingActor::staff($this->user()));
-        } catch (BookingFailed|AuthorizationException $e) {
-            $this->error = $e->getMessage();
+        $this->branchUuid = $uuids[0] ?? '';
+    }
 
-            return;
+    /**
+     * Branches in the viewer's scope, read once per request.
+     *
+     * @return list<array{uuid: string, name: string, timezone: string}>
+     */
+    private function branches(): array
+    {
+        return $this->branchList ??= app(BookingOptions::class)->branches($this->viewer());
+    }
+
+    /** Today where the branch is — never the server's day (docs/15 §5). */
+    private function todayLocal(): string
+    {
+        return BranchClock::localDate(CarbonImmutable::now()->utc(), $this->timezone());
+    }
+
+    private function nowMinute(): int
+    {
+        $local = BranchClock::toLocal(CarbonImmutable::now()->utc(), $this->timezone());
+
+        return $local->hour * 60 + $local->minute;
+    }
+
+    private function timezone(): string
+    {
+        foreach ($this->branches() as $branch) {
+            if (in_array($this->branchUuid, ['', 'all'], true) || $branch['uuid'] === $this->branchUuid) {
+                return $branch['timezone'];
+            }
         }
 
-        $this->notice = $notice;
-        $this->error = '';
+        return (string) config('app.timezone', 'UTC');
     }
 
-    private function current(): ?Appointment
-    {
-        if ($this->viewing === null) {
-            return null;
-        }
-
-        return Appointment::query()->where('uuid', $this->viewing)->first();
-    }
-
-    private function resetBookingForm(): void
-    {
-        $this->customerSearch = '';
-        $this->customerUuid = '';
-        $this->newCustomerName = '';
-        $this->newCustomerPhone = '';
-        $this->serviceUuid = '';
-        $this->variationUuid = '';
-        $this->addonUuids = [];
-        $this->bookingEmployeeUuid = '';
-        $this->bookingNote = '';
-        $this->slots = [];
-        $this->error = '';
-    }
-
-    private function user(): User
+    private function viewer(): User
     {
         $user = auth()->user();
 
-        if (! $user instanceof User) {
-            throw new AuthorizationException('Authentication is required.');
-        }
+        abort_unless($user instanceof User, 403);
 
         return $user;
     }

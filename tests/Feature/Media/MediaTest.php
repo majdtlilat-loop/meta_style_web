@@ -10,6 +10,7 @@ use App\Kernel\Media\Models\MediaItem;
 use App\Kernel\Storage\MediaCollection;
 use App\Kernel\Storage\MediaStore;
 use App\Kernel\Tenancy\Exceptions\TenantNotResolved;
+use App\Kernel\Tenancy\PlatformHosts;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -313,7 +314,12 @@ it('shows a service image on the public menu', function (): void {
         );
     });
 
-    $images = $this->getJson('/api/v1/menu/'.$this->publicKeyOf($center['tenant']))
+    // Phase 15: the public menu API answers on the center's OWN host, with its
+    // public slug in the path (ADR-076). A bare path on the platform host is
+    // "No center is published at this address".
+    $slug = (string) $center['registration']->requested_slug;
+
+    $images = $this->getJson(app(PlatformHosts::class)->centerUrl($slug, '/api/v1/menu/'.$slug))
         ->assertOk()
         ->json('data.services.0.images');
 

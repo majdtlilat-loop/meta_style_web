@@ -44,9 +44,11 @@ final class Announcement
      * The payload for one call, in every language the display wants.
      *
      * @param  list<string>  $locales
+     * @param  string|null  $key  the screen's opaque key for this call
+     *                            ({@see DisplayFeed}); never the event's uuid
      * @return array<string, mixed>
      */
-    public function forTicket(QueueTicket $ticket, array $locales): array
+    public function forTicket(QueueTicket $ticket, array $locales, ?string $key): array
     {
         $ticket->loadMissing('servicePoint');
 
@@ -68,7 +70,7 @@ final class Announcement
         }
 
         return [
-            'announcement_id' => $ticket->last_announcement_uuid,
+            'announcement_id' => $key,
             'number' => $ticket->display_number,
             'destination_code' => $point?->display_code,
             'lines' => $lines,

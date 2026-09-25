@@ -10,7 +10,9 @@ use App\Modules\Booking\Domain\BookingSettings;
 use App\Modules\Booking\Domain\Data\AvailabilityQuery;
 use App\Modules\Booking\Domain\Data\AvailabilitySlot;
 use App\Modules\Booking\Domain\Data\ResolvedLine;
+use App\Modules\Booking\Domain\Data\StoredLine;
 use App\Modules\Booking\Domain\Exceptions\BookingFailed;
+use App\Modules\Booking\Domain\Models\Appointment;
 use App\Modules\Branches\Domain\Models\Branch;
 use Carbon\CarbonImmutable;
 
@@ -76,6 +78,7 @@ final class AvailabilityEngine
         private readonly ResourceFinder $reservations,
         private readonly Scheduler $scheduler,
         private readonly BookingSettings $settings,
+        private readonly StoredLayout $stored,
     ) {}
 
     /**
@@ -88,6 +91,10 @@ final class AvailabilityEngine
     public function slots(AvailabilityQuery $query, bool $publicChannel, ?CarbonImmutable $now = null): array
     {
         $now ??= CarbonImmutable::now();
+
+        if ($query->isMove()) {
+            return $this->slotsForMove($query, $publicChannel, $now);
+        }
 
         $branch = $this->branch($query->branchUuid, $publicChannel);
 
@@ -170,6 +177,129 @@ final class AvailabilityEngine
         }
 
         // Anchored by different intervals, so not necessarily in order.
+        usort($slots, static fn (AvailabilitySlot $a, AvailabilitySlot $b): int => $a->startsAt <=> $b->startsAt);
+
+        return $slots;
+    }
+
+    /**
+     * Where an EXISTING appointment could move to.
+     *
+     * The same candidate starts, the same lead time and horizon, the same
+     * per-item opening-hours check — but the visit is laid out from its STORED
+     * items ({@see StoredLayout}), staffed with the reschedule's rules, and
+     * checked against a busy map and a resource load map that IGNORE the
+     * appointment itself. Otherwise a sixty-minute booking could never be
+     * offered a start thirty minutes later: it would collide with the copy of
+     * itself it is moving away from (docs/15-BOOKING.md §4).
+     *
+     * Advisory. `RescheduleAppointment` re-checks everything under the branch
+     * lock, and a slot offered here can still be refused there.
+     *
+     * @return list<AvailabilitySlot>
+     *
+     * @throws BookingFailed
+     */
+    private function slotsForMove(AvailabilityQuery $query, bool $publicChannel, CarbonImmutable $now): array
+    {
+        // A customer reschedules through their own channel with its own
+        // rules; this form of the question is the desk's.
+        if ($publicChannel) {
+            throw BookingFailed::policy('That appointment cannot be moved.');
+        }
+
+        $branch = $this->branch($query->branchUuid, false);
+
+        $this->assertRangeIsSane($query, $now, $branch->timezone);
+
+        $appointment = Appointment::query()
+            ->where('uuid', (string) $query->movingAppointmentUuid)
+            ->where('branch_id', $branch->getKey())
+            ->with(['items.service', 'items.resourceReservations.resource'])
+            ->first();
+
+        if (! $appointment instanceof Appointment || $appointment->isTerminal()) {
+            throw BookingFailed::policy('That appointment cannot be moved.');
+        }
+
+        $lines = $this->stored->of($appointment, $branch);
+
+        if ($lines === []) {
+            throw BookingFailed::policy('That appointment has no services to move.');
+        }
+
+        $windows = $this->calendar->windowsForRange($branch, $query->fromDate, $query->toDate);
+
+        if ($windows === []) {
+            return [];
+        }
+
+        [$from, $to] = $this->rangeOf($windows);
+        $ignore = (int) $appointment->getKey();
+
+        $busy = $this->loadStoredBusy($lines, $branch, $from, $to, $ignore);
+        $loads = $this->loadStoredResources($lines, $from, $to, $ignore);
+
+        $interval = $this->settings->slotIntervalMinutes();
+        $earliest = $now->utc()->addMinutes($this->settings->minLeadMinutes());
+        $horizon = $this->horizon($now);
+
+        $total = 0;
+        $anchor = null;
+
+        foreach ($lines as $line) {
+            $ends = $line->offsetMinutes + $line->durationMinutes;
+            $total = max($total, $ends);
+            $anchor = $anchor === null ? $ends : min($anchor, $ends);
+        }
+
+        $candidates = array_map(static fn (StoredLine $line): array => $line->candidates, $lines);
+        $held = array_map(static fn (StoredLine $line): array => $line->held, $lines);
+
+        $slots = [];
+        $seen = [];
+
+        foreach ($windows as $open) {
+            foreach ($this->candidateStarts($open, (int) $anchor, $interval) as $start) {
+                $key = $start->getTimestamp();
+
+                if (isset($seen[$key]) || $start < $earliest || $start > $horizon) {
+                    continue;
+                }
+
+                $localDate = BranchClock::localDate($start, $branch->timezone);
+
+                if ($localDate < $query->fromDate || $localDate > $query->toDate) {
+                    continue;
+                }
+
+                $itemWindows = array_map(
+                    static fn (StoredLine $line): TimeWindow => TimeWindow::of($start->addMinutes($line->offsetMinutes), $line->durationMinutes),
+                    $lines,
+                );
+
+                if (! $this->itemsAreOpen($branch, $itemWindows)) {
+                    continue;
+                }
+
+                $assignments = $this->assigner->assignFromCandidates($candidates, $itemWindows, $busy);
+
+                if ($assignments === null || ! $this->resources->heldFit($held, $itemWindows, $loads)) {
+                    continue;
+                }
+
+                $seen[$key] = true;
+
+                $slots[] = new AvailabilitySlot(
+                    startsAt: $start,
+                    endsAt: $start->addMinutes($total),
+                    localDate: $localDate,
+                    localTime: BranchClock::toLocal($start, $branch->timezone)->format('H:i'),
+                    assignments: $assignments,
+                );
+            }
+        }
+
         usort($slots, static fn (AvailabilitySlot $a, AvailabilitySlot $b): int => $a->startsAt <=> $b->startsAt);
 
         return $slots;
@@ -318,6 +448,61 @@ final class AvailabilityEngine
         }
 
         return $busy;
+    }
+
+    /**
+     * The busy map for a move, WITHOUT the appointment being moved.
+     *
+     * @param  list<StoredLine>  $lines
+     * @return array<int, list<TimeWindow>>
+     */
+    private function loadStoredBusy(array $lines, Branch $branch, CarbonImmutable $from, CarbonImmutable $to, int $ignore): array
+    {
+        $ids = [];
+
+        foreach ($lines as $line) {
+            foreach ($line->candidates as $id) {
+                $ids[] = $id;
+            }
+        }
+
+        $ids = array_values(array_unique($ids));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $busy = $this->conflicts->busyWindows($ids, $from, $to, $ignore);
+
+        foreach ($this->blocks->blockedWindows($ids, (int) $branch->getKey(), $from, $to) as $id => $blocked) {
+            foreach ($blocked as $window) {
+                $busy[$id][] = $window;
+            }
+        }
+
+        return $busy;
+    }
+
+    /**
+     * The load map of the rooms and devices the moved visit holds, WITHOUT its
+     * own reservations.
+     *
+     * @param  list<StoredLine>  $lines
+     * @return array<int, list<array{window: TimeWindow, quantity: int}>>
+     */
+    private function loadStoredResources(array $lines, CarbonImmutable $from, CarbonImmutable $to, int $ignore): array
+    {
+        $ids = [];
+
+        foreach ($lines as $line) {
+            foreach ($line->held as $held) {
+                $ids[] = (int) $held['resource']->getKey();
+            }
+        }
+
+        $ids = array_values(array_unique($ids));
+
+        return $ids === [] ? [] : $this->reservations->loads($ids, $from, $to, $ignore);
     }
 
     private function horizon(CarbonImmutable $now): CarbonImmutable

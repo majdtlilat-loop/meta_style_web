@@ -8,6 +8,9 @@ use App\Kernel\Http\Middleware\EnsureIdempotency;
 use App\Kernel\Identity\Actions\IssueApiToken;
 use App\Kernel\Identity\TenantApiToken;
 use App\Kernel\Tenancy\Infrastructure\StanclTenantResolver;
+use App\Kernel\Tenancy\PlatformHosts;
+use App\Livewire\Center\Booking\AppointmentPanel;
+use App\Livewire\Center\Booking\Composer;
 use App\Livewire\Center\Calendar;
 use App\Livewire\Customer\Account as CustomerAccountPage;
 use App\Modules\Booking\Contracts\BookingEngine;
@@ -156,12 +159,13 @@ it('lists future appointments whose employee is no longer active', function (): 
 
 it('refuses to let a public booking claim it came from staff', function (): void {
     $center = $this->registerCenter();
-    $key = $this->publicKeyOf($center['tenant']);
+    // The guest surfaces live on the center's own host since Phase 15.
+    $slug = $center['registration']->requested_slug;
 
     $seed = $this->asCenter($center['tenant'], fn (): array => $this->seedBookableCenter());
 
     $response = $this->withHeaders(['Accept' => 'application/json', EnsureIdempotency::HEADER => (string) Str::uuid()])
-        ->postJson("/api/v1/menu/{$key}/bookings", [
+        ->postJson(app(PlatformHosts::class)->centerUrl($slug, "/api/v1/menu/{$slug}/bookings"), [
             'branch' => $seed['branch']->uuid,
             'starts_at' => $this->localTime($seed['branch'], SURFACE_DATE, '10:00')->toIso8601String(),
             'services' => [['service' => $seed['service']->uuid]],
@@ -189,7 +193,8 @@ it('refuses to let a public booking claim it came from staff', function (): void
 
 it('renders the public booking page and takes a guest booking end to end', function (): void {
     $center = $this->registerCenter();
-    $key = $this->publicKeyOf($center['tenant']);
+    // The guest surfaces live on the center's own host since Phase 15.
+    $slug = $center['registration']->requested_slug;
 
     $seed = $this->asCenter($center['tenant'], function (): array {
         $seed = $this->seedBookableCenter();
@@ -199,14 +204,14 @@ it('renders the public booking page and takes a guest booking end to end', funct
     });
 
     // The menu offers the action.
-    $this->get("/m/{$key}")->assertOk()->assertSee('Book', false);
+    $this->get(app(PlatformHosts::class)->centerUrl($slug, '/list'))->assertOk()->assertSee('Book', false);
 
     // Step 1: choose a service and a date.
-    $page = $this->get("/m/{$key}/book?".http_build_query([
+    $page = $this->get(app(PlatformHosts::class)->centerUrl($slug, '/booking?'.http_build_query([
         'branch' => $seed['branch']->uuid,
         'service' => $seed['service']->uuid,
         'date' => SURFACE_DATE,
-    ]))->assertOk();
+    ])))->assertOk();
 
     $page->assertSee('Available times', false)
         // No account required, and the page says so — the single biggest reason
@@ -214,7 +219,7 @@ it('renders the public booking page and takes a guest booking end to end', funct
         ->assertSee('No account needed', false);
 
     // Step 3: the form posts, and one appointment exists.
-    $this->post("/m/{$key}/book", [
+    $this->post(app(PlatformHosts::class)->centerUrl($slug, '/booking'), [
         'branch' => $seed['branch']->uuid,
         'service' => $seed['service']->uuid,
         'starts_at' => $this->localTime($seed['branch'], SURFACE_DATE, '10:00')->toIso8601String(),
@@ -232,7 +237,8 @@ it('renders the public booking page and takes a guest booking end to end', funct
 
 it('does not offer booking on the menu when the center does not own it', function (): void {
     $center = $this->registerCenter();
-    $key = $this->publicKeyOf($center['tenant']);
+    // The guest surfaces live on the center's own host since Phase 15.
+    $slug = $center['registration']->requested_slug;
 
     DB::connection('control')->table('tenant_entitlement_overrides')->insert([
         'tenant_id' => $center['tenant']->id,
@@ -252,16 +258,17 @@ it('does not offer booking on the menu when the center does not own it', functio
 
     // The MENU still renders — it is the center's shop window, and switching it
     // off would punish their customers for a billing decision (§31).
-    $this->get("/m/{$key}")->assertOk()->assertDontSee('/book', false);
+    $this->get(app(PlatformHosts::class)->centerUrl($slug, '/list'))->assertOk()->assertDontSee('/booking', false);
 
     // The booking page is simply not there. 404 rather than 403: a guest has no
     // billing relationship with the center.
-    $this->get("/m/{$key}/book")->assertNotFound();
+    $this->get(app(PlatformHosts::class)->centerUrl($slug, '/booking'))->assertNotFound();
 });
 
 it('does not show a Book action for a service that must be booked by phone', function (): void {
     $center = $this->registerCenter();
-    $key = $this->publicKeyOf($center['tenant']);
+    // The guest surfaces live on the center's own host since Phase 15.
+    $slug = $center['registration']->requested_slug;
 
     $this->asCenter($center['tenant'], function (): void {
         $seed = $this->seedBookableCenter();
@@ -270,7 +277,7 @@ it('does not show a Book action for a service that must be booked by phone', fun
     });
 
     // A working button that leads to a refusal is worse than no button (§26).
-    $this->get("/m/{$key}")->assertOk()->assertDontSee('/book?', false);
+    $this->get(app(PlatformHosts::class)->centerUrl($slug, '/list'))->assertOk()->assertDontSee('/booking?', false);
 });
 
 it('drives the staff calendar and booking desk through Livewire', function (): void {
@@ -281,40 +288,48 @@ it('drives the staff calendar and booking desk through Livewire', function (): v
         $owner = $this->ownerWithCatalogAccess();
         $customer = $this->seedCustomer('Sara Ahmed', '0750 123 4567');
 
-        $component = Livewire::actingAs($owner)->test(Calendar::class, ['date' => SURFACE_DATE])
-            ->set('date', SURFACE_DATE)
-            ->set('branchUuid', $seed['branch']->uuid);
+        // The page opens on the requested day at the branch in scope, and
+        // "New booking" opens the booking drawer.
+        Livewire::withQueryParams(['date' => SURFACE_DATE])->actingAs($owner)->test(Calendar::class)
+            ->assertSet('date', SURFACE_DATE)
+            ->assertSet('branchUuid', $seed['branch']->uuid)
+            ->call('startBooking')
+            ->assertSet('composing', true);
 
         // Customer → service → find times → book: the flow reception actually
-        // performs (§24).
-        $component->call('startBooking')
-            ->set('bookingDate', SURFACE_DATE)
-            ->set('serviceUuid', $seed['service']->uuid)
-            ->set('customerUuid', $customer->uuid)
+        // performs (§24). Since the Manager split (Phase 15) the drawer is its
+        // own component, Booking\Composer; the page only opens it.
+        $composer = Livewire::actingAs($owner)
+            ->test(Composer::class, ['branch' => $seed['branch']->uuid, 'date' => SURFACE_DATE])
+            ->set('form.customerSearch', 'Sara')
+            ->call('chooseCustomer', $customer->uuid)
+            ->set('form.lines.0.service', $seed['service']->uuid)
             ->call('findSlots')
             ->assertSet('error', '');
 
-        $slots = $component->get('slots');
+        $slots = $composer->get('slots');
 
         expect($slots)->not->toBeEmpty();
 
-        $component->call('book', $slots[0]['starts_at'])
+        $composer->call('pickSlot', $slots[0]['starts_at'])
+            ->call('book')
             ->assertSet('error', '')
-            ->assertSet('booking', false);
+            ->assertSet('step', 'done');
 
         $appointment = Appointment::query()->firstOrFail();
 
         expect($appointment->customer_id)->toBe($customer->id)
             ->and($appointment->source)->toBe(BookingSource::Staff);
 
-        // Lifecycle from the same screen.
-        $component->call('open', $appointment->uuid)
+        // Lifecycle from the booking drawer (Booking\AppointmentPanel).
+        $panel = Livewire::actingAs($owner)
+            ->test(AppointmentPanel::class, ['appointment' => $appointment->uuid])
             ->call('confirm')
             ->assertSet('error', '');
 
         expect($appointment->refresh()->status)->toBe(AppointmentStatus::Confirmed);
 
-        $component->set('cancelReason', 'Customer called')->call('cancel');
+        $panel->set('cancelReason', 'Customer called')->call('cancel');
 
         expect($appointment->refresh()->status)->toBe(AppointmentStatus::Cancelled)
             ->and($appointment->cancellation_reason)->toBe('Customer called');
@@ -337,13 +352,16 @@ it('shows the note advisory on the booking screen', function (): void {
                 customer: CustomerRef::existing($customer->uuid),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         // The Phase 5 follow-up: an explicit warning in front of the person
-        // about to type, not a filter guessing afterwards (§1).
-        Livewire::actingAs($owner)->test(Calendar::class, ['date' => SURFACE_DATE])
-            ->set('branchUuid', $seed['branch']->uuid)
+        // about to type, not a filter guessing afterwards (§1). Opening a
+        // booking on the page mounts the booking drawer, which carries it.
+        Livewire::withQueryParams(['date' => SURFACE_DATE])->actingAs($owner)->test(Calendar::class)
             ->call('open', $appointment->uuid)
+            ->assertSet('viewing', $appointment->uuid);
+
+        Livewire::actingAs($owner)->test(AppointmentPanel::class, ['appointment' => $appointment->uuid])
             ->assertSee('not a medical record', false);
     });
 });
@@ -391,7 +409,7 @@ it('lets a signed-in customer see and cancel their own bookings on the web', fun
                 customer: CustomerRef::self(),
             ),
             BookingActor::customer($account, $customer->name),
-        );
+        )->appointment;
 
         session()->put(StanclTenantResolver::SESSION_KEY, 'irrelevant-in-component-test');
 
@@ -426,7 +444,7 @@ it('serves a customer their own appointments over the API and nobody else\'s', f
                 customer: CustomerRef::self(),
             ),
             BookingActor::customer($account, $mine->name),
-        );
+        )->appointment;
 
         $other = $engine->book(
             new BookingRequest(
@@ -436,7 +454,7 @@ it('serves a customer their own appointments over the API and nobody else\'s', f
                 customer: CustomerRef::existing($theirs->uuid),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        );
+        )->appointment;
 
         $publicKey = $this->publicKeyOf($center['tenant']);
 

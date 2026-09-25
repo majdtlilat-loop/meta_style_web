@@ -23,6 +23,31 @@ final class TestDatabaseManager
 {
     public const PREFIX = 'meta_style_test_';
 
+    /**
+     * Databases owned by a NAMESPACED run start with this. A run started with
+     * METASTYLE_TEST_DB_NAMESPACE=x owns only `meta_style_test_ns_x_*` (its
+     * control database and tenant prefix must be named inside it), and a
+     * default run never touches any namespaced database. Two runs therefore
+     * never drop each other's databases — isolation, not a shared server.
+     */
+    public const NAMESPACED = self::PREFIX.'ns_';
+
+    /** The prefix every database of THIS run must carry. */
+    public static function prefix(): string
+    {
+        $namespace = getenv('METASTYLE_TEST_DB_NAMESPACE');
+
+        if (is_string($namespace) && $namespace !== '') {
+            if (preg_match('/^[a-z][a-z0-9]{0,11}$/D', $namespace) !== 1) {
+                throw new InvalidArgumentException('METASTYLE_TEST_DB_NAMESPACE must be 1-12 lowercase letters or digits.');
+            }
+
+            return self::NAMESPACED.$namespace.'_';
+        }
+
+        return self::PREFIX;
+    }
+
     private static ?PDO $server = null;
 
     /**
@@ -118,14 +143,20 @@ final class TestDatabaseManager
      */
     public static function existing(): array
     {
+        $prefix = self::prefix();
         $statement = self::server()->query(
-            "SHOW DATABASES LIKE '".self::PREFIX."%'"
+            "SHOW DATABASES LIKE '".str_replace('_', '\_', $prefix)."%'"
         );
 
         /** @var list<string> $names */
         $names = $statement === false ? [] : $statement->fetchAll(PDO::FETCH_COLUMN);
 
-        return $names;
+        // A default run owns everything under the base prefix EXCEPT the
+        // namespaced runs' databases.
+        return array_values(array_filter(
+            $names,
+            static fn (string $name): bool => $prefix !== self::PREFIX || ! str_starts_with($name, self::NAMESPACED),
+        ));
     }
 
     /**
@@ -133,14 +164,17 @@ final class TestDatabaseManager
      */
     private static function guard(string $database): void
     {
-        if (! str_starts_with($database, self::PREFIX)) {
+        $prefix = self::prefix();
+        if (! str_starts_with($database, $prefix)
+            || ($prefix === self::PREFIX && str_starts_with($database, self::NAMESPACED))) {
             throw new InvalidArgumentException(
-                "Refusing to manage database [{$database}]: test databases must be "
-                .'prefixed with "'.self::PREFIX.'".'
+                "Refusing to manage database [{$database}]: this run's test databases must be "
+                .'prefixed with "'.$prefix.'".'
             );
         }
 
-        if (preg_match('/^[A-Za-z0-9_]+$/', $database) !== 1) {
+        // `D`: `$` would otherwise also match before a final newline.
+        if (preg_match('/^[A-Za-z0-9_]+$/D', $database) !== 1) {
             throw new InvalidArgumentException(
                 "Refusing to manage database [{$database}]: unsafe name."
             );

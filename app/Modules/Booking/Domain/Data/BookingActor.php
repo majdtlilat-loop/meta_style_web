@@ -87,6 +87,44 @@ final readonly class BookingActor
     }
 
     /**
+     * The assistant, booking for a customer it reached over a verified channel.
+     *
+     * A FOURTH kind of actor, and it needed to be one rather than being dressed
+     * up as an existing one. It is not `staff` — nobody at the center pressed
+     * anything, and recording it as staff would tell an investigation a person
+     * made this booking. It is not `customer` either: that factory needs a
+     * `CustomerAccount`, and a WhatsApp customer may well have no login at all
+     * (docs/27-RAYAN.md §12).
+     *
+     * `$label` is the channel, never a customer's name or number: it lands in
+     * `appointments.created_by_label`, which is displayed on the calendar.
+     */
+    public static function assistant(string $label = 'rayan'): self
+    {
+        return new self(ActorType::Ai, BookingSource::Rayan, null, $label);
+    }
+
+    public function isAssistant(): bool
+    {
+        return $this->type === ActorType::Ai;
+    }
+
+    /**
+     * Should this actor see only what a CUSTOMER is allowed to see — public
+     * branches, online-bookable services?
+     *
+     * True for a guest and for the assistant. The assistant talks to customers,
+     * so it must never be able to offer an internal-only branch or a service
+     * the center deliberately keeps off its public menu — and a model asked
+     * "what else do you do?" would happily read out whatever it was given
+     * (docs/13-ROADMAP.md Phase 13 §29).
+     */
+    public function usesPublicCatalog(): bool
+    {
+        return $this->isGuest() || $this->isAssistant();
+    }
+
+    /**
      * The audit trail's view of the same actor.
      */
     public function toAuditActor(): Actor

@@ -54,8 +54,10 @@ it('does not create a second center when the same registration is retried', func
 it('derives an idempotency key from the submission when the client sends none', function (): void {
     $payload = [
         'center_name' => 'Laser Center Beta',
+        'center_slug' => 'laser-center-beta',
         'owner_name' => 'Owner',
         'owner_email' => 'owner@beta.test',
+        'owner_phone' => '+9647701234567',
         'password' => 'correct-horse-battery-staple',
     ];
 
@@ -66,18 +68,46 @@ it('derives an idempotency key from the submission when the client sends none', 
     expect(Registration::query()->count())->toBe(1);
 });
 
-it('reports preparing before provisioning runs, and never success early', function (): void {
+it('rejects a different registration that requests an already pending center slug', function (): void {
+    $first = [
+        'center_name' => 'Reserved Address Owner',
+        'center_slug' => 'reserved-address',
+        'owner_name' => 'First Owner',
+        'owner_email' => 'first@reserved.test',
+        'owner_phone' => '+9647701234567',
+        'password' => 'correct-horse-battery-staple',
+    ];
+
+    $this->postJson('/api/v1/public/registrations', $first)->assertStatus(202);
+
+    $this->postJson('/api/v1/public/registrations', [
+        ...$first,
+        'center_name' => 'Address Impostor',
+        'owner_name' => 'Second Owner',
+        'owner_email' => 'second@reserved.test',
+        'owner_phone' => '+9647701234567',
+    ])
+        ->assertStatus(422)
+        ->assertJsonPath('error.code', 'VALIDATION.FAILED')
+        ->assertJsonStructure(['error' => ['details' => ['fields' => ['center_slug']]]]);
+
+    expect(Registration::query()->count())->toBe(1);
+});
+
+it('reports pending verification before email ownership is confirmed, and never success early', function (): void {
     $response = $this->postJson('/api/v1/public/registrations', [
         'center_name' => 'Spa Gamma',
+        'center_slug' => 'spa-gamma',
         'owner_name' => 'Owner',
         'owner_email' => 'owner@gamma.test',
+        'owner_phone' => '+9647701234567',
         'password' => 'correct-horse-battery-staple',
     ])->assertStatus(202);
 
     $uuid = $response->json('data.uuid');
     $token = $response->json('data.access_token');
 
-    expect($response->json('data.status'))->toBe('preparing')
+    expect($response->json('data.status'))->toBe('pending_verification')
         ->and($response->json('data.tenant'))->toBeNull()
         // Returned exactly once, here (ADR-035).
         ->and($token)->toBeString()->toHaveLength(64);
@@ -85,7 +115,7 @@ it('reports preparing before provisioning runs, and never success early', functi
     $this->withHeaders($this->registrationHeaders((string) $token))
         ->getJson("/api/v1/public/registrations/{$uuid}")
         ->assertOk()
-        ->assertJsonPath('data.status', 'preparing');
+        ->assertJsonPath('data.status', 'pending_verification');
 });
 
 it('starts a trial subscription on the default plan', function (): void {
@@ -123,6 +153,7 @@ it('marks a failed provisioning as failed and retryable, never ready', function 
         'center_name' => 'Doomed Center',
         'owner_name' => 'Owner',
         'owner_email' => 'owner@doomed.test',
+        'owner_phone' => '+9647701234567',
         'password' => 'correct-horse-battery-staple',
     ], 'idem-doomed')['registration'];
 
@@ -163,6 +194,7 @@ it('re-queues a failed registration through the public retry endpoint', function
         'center_name' => 'Endpoint Retry Center',
         'owner_name' => 'Owner',
         'owner_email' => 'owner@endpointretry.test',
+        'owner_phone' => '+9647701234567',
         'password' => 'correct-horse-battery-staple',
     ], 'idem-endpoint-retry');
 
@@ -213,6 +245,7 @@ it('tells the client whether a registration can be retried', function (): void {
         'center_name' => 'Payload Center',
         'owner_name' => 'Owner',
         'owner_email' => 'owner@payload.test',
+        'owner_phone' => '+9647701234567',
         'password' => 'correct-horse-battery-staple',
     ], 'idem-payload');
 

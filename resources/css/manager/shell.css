@@ -1,0 +1,153 @@
+/*
+ * Manager — shell. Owned by one area: component styles for that area only.
+ * Shared primitives live in platform/components.css.
+ *
+ *   locked nav items · subscription banner · upgrade prompt · bell & inbox
+ *   plan page · support desk · feature-locked 403 page
+ *
+ * Tokens only, logical properties only (RTL), both themes from the tokens.
+ */
+
+/* ══ Locked sidebar items ═══════════════════════════════════════════════
+ * A feature the person may use but the center does not own: still a link
+ * (fallback: the plan page), muted, with the plan that sells it underneath
+ * and a lock that survives the collapsed rail.
+ */
+.app-nav a[data-locked] { min-height: 2.6rem; color: var(--color-text-subtle); }
+.app-nav a[data-locked] > .ui-icon:first-child { color: var(--color-text-subtle); opacity: .85; }
+.app-nav a[data-locked]:hover { color: var(--color-text); }
+.app-nav a[data-locked]:hover > .ui-icon:first-child { color: var(--color-primary); opacity: 1; }
+.app-nav__stack { display: grid; flex: 1 1 auto; min-width: 0; gap: 0; line-height: 1.25; }
+.app-nav__lock-label { display: block; overflow: hidden; color: var(--color-text-subtle); font-size: var(--text-2xs); font-weight: var(--weight-body); text-overflow: ellipsis; white-space: nowrap; }
+.app-nav a[data-locked]:hover .app-nav__lock-label { color: var(--color-primary-text); }
+.app-nav a .ui-icon.app-nav__lock { flex: none; width: .85rem; height: .85rem; color: var(--color-text-subtle); }
+.app-nav__lock-dot { display: none; }
+
+html[data-sidebar="collapsed"] .app-nav a[data-locked] { min-height: 2.35rem; }
+html[data-sidebar="collapsed"] .app-nav__lock-dot {
+    position: absolute; inset-block-start: .2rem; inset-inline-end: .35rem;
+    display: grid; width: 1rem; height: 1rem; place-items: center;
+    border: 1px solid var(--color-border); border-radius: 50%;
+    background: var(--color-surface-elevated); color: var(--color-text-muted);
+}
+html[data-sidebar="collapsed"] .app-nav__lock-dot .ui-icon { width: .6rem; height: .6rem; color: currentColor; }
+
+@media (max-width: 64rem) {
+    html[data-sidebar="collapsed"] .app-nav__lock-dot { display: none; }
+    html[data-sidebar="collapsed"] .app-nav a[data-locked] { min-height: 2.6rem; }
+}
+
+/* ══ Subscription banner ════════════════════════════════════════════════ */
+.subscription-banner { border-block-end: 1px solid var(--color-info-border); background: var(--color-info-soft); color: var(--color-text); }
+.subscription-banner[data-tone="warning"] { border-color: var(--color-warning-border); background: var(--color-warning-soft); }
+.subscription-banner[data-tone="danger"] { border-color: var(--color-danger-border); background: var(--color-danger-soft); }
+.subscription-banner__inner {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
+    width: 100%; max-width: var(--content-max); margin-inline: auto;
+    padding: var(--space-2) clamp(var(--space-4), 2.5vw, var(--space-8));
+}
+.subscription-banner__icon { display: inline-grid; flex: none; place-items: center; color: var(--color-info); }
+.subscription-banner[data-tone="warning"] .subscription-banner__icon { color: var(--color-warning); }
+.subscription-banner[data-tone="danger"] .subscription-banner__icon { color: var(--color-danger); }
+.subscription-banner__message { flex: 1 1 18rem; margin: 0; font-size: var(--text-sm); font-weight: var(--weight-strong); line-height: 1.45; }
+.subscription-banner__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.subscription-banner__link { color: var(--color-text); font-size: var(--text-sm); font-weight: var(--weight-strong); text-decoration: underline; text-underline-offset: 3px; }
+.subscription-banner__cta .ui-icon { width: .85rem; height: .85rem; }
+[dir="rtl"] .subscription-banner__cta .ui-icon { transform: scaleX(-1); }
+
+/* ══ Upgrade prompt (the dialog behind a locked item) ═══════════════════ */
+.upgrade-prompt__dialog { position: relative; width: min(54rem, 100%); }
+.upgrade-prompt__close { position: absolute; z-index: 1; inset-block-start: var(--space-3); inset-inline-end: var(--space-3); }
+.upgrade-prompt .feature-lock { width: 100%; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.upgrade-prompt .feature-lock__header { padding-inline-end: var(--space-8); }
+.upgrade-prompt__history { margin-inline-end: auto; }
+.upgrade-prompt__ask { display: flex; flex: 1 1 100%; align-items: center; gap: var(--space-2); margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+.upgrade-prompt__ask .ui-icon { flex: none; color: var(--color-info); }
+@media (max-width: 48rem) {
+    .upgrade-prompt { place-items: end center; padding: 0; }
+    .upgrade-prompt__dialog { max-height: 92vh; border-end-start-radius: 0; border-end-end-radius: 0; }
+    .upgrade-prompt__history { margin-inline-end: 0; }
+}
+
+/* ══ Bell & inbox ═══════════════════════════════════════════════════════ */
+.manager-bell__kind { color: var(--color-text-muted); font-weight: var(--weight-strong); }
+.manager-bell__kind.is-important { color: var(--color-warning); }
+.inbox-list__header { justify-content: flex-start; }
+.inbox-list__kind { display: block; margin-block-end: .1rem; color: var(--color-text-subtle); font-size: var(--text-xs); font-weight: var(--weight-strong); }
+.inbox-list__more { display: flex; justify-content: center; }
+
+/* ══ Plan page ══════════════════════════════════════════════════════════ */
+.plan-overview { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(18rem, 1fr); gap: var(--space-5); align-items: start; }
+.plan-hero { display: grid; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
+.plan-hero__head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-4); }
+.plan-hero__icon { display: inline-grid; flex: none; width: 3rem; height: 3rem; place-items: center; border-radius: var(--radius-lg); background: var(--gradient-accent); color: var(--color-primary-text); }
+.plan-hero__identity { display: grid; flex: 1 1 14rem; gap: var(--space-2); min-width: 0; }
+.plan-hero__identity .eyebrow { margin: 0; }
+.plan-hero__identity h2 { margin: 0; font-size: var(--text-2xl); line-height: var(--leading-tight); }
+.plan-hero__price { display: grid; justify-items: end; gap: .1rem; text-align: end; }
+.plan-hero__price strong { font-size: var(--text-xl); font-variant-numeric: tabular-nums; }
+.plan-hero__price span { color: var(--color-text-muted); font-size: var(--text-xs); }
+.plan-hero__description { margin: 0; color: var(--color-text-muted); line-height: 1.55; }
+.plan-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--space-3); margin: 0; padding-block-start: var(--space-4); border-block-start: 1px solid var(--color-divider); }
+.plan-facts > div { display: grid; gap: .2rem; }
+.plan-facts dt { color: var(--color-text-muted); font-size: var(--text-xs); }
+.plan-facts dd { margin: 0; font-weight: var(--weight-strong); }
+.plan-facts__hint { display: block; color: var(--color-text-subtle); font-size: var(--text-xs); font-weight: var(--weight-body); }
+.plan-facts__change dd { color: var(--color-primary-text); }
+
+.plan-features { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: var(--space-4) var(--space-5); }
+.plan-features__group h3 { margin: 0 0 var(--space-2); color: var(--color-text-muted); font-size: var(--text-xs); font-weight: var(--weight-strong); letter-spacing: .04em; text-transform: uppercase; }
+html:is([lang="ar"], [lang="ckb"]) .plan-features__group h3 { letter-spacing: 0; text-transform: none; }
+.plan-features__group ul { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.plan-features__group li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
+.plan-features__group li > .ui-icon { flex: none; color: var(--color-success); }
+
+.plan-compare { scroll-margin-block-start: calc(var(--topbar-height) + var(--space-4)); }
+.plan-compare__focus { display: flex; align-items: center; gap: var(--space-3); margin: 0 var(--space-5) var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--color-primary-border); border-radius: var(--radius-md); background: var(--color-primary-soft); }
+.plan-compare__focus p { margin: 0; font-size: var(--text-sm); }
+.plan-compare__focus > .ui-icon { flex: none; color: var(--color-primary-text); }
+.plan-compare__scroll { overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; }
+.plan-compare__scroll:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.plan-compare__table { min-width: 36rem; }
+.plan-compare__table :is(th, td) { white-space: nowrap; }
+.plan-compare__table tbody th[scope="row"], .plan-compare__corner { position: sticky; inset-inline-start: 0; z-index: 1; min-width: 12rem; background: var(--color-surface-elevated); white-space: normal; }
+.plan-compare__table thead .plan-compare__corner { z-index: 2; background: var(--color-surface-muted); }
+.plan-compare__plan { min-width: 10rem; vertical-align: top; text-align: center; }
+.plan-compare__plan > span { display: block; }
+.plan-compare__name { color: var(--color-text); font-size: var(--text-sm); }
+.plan-compare__badges { min-height: 1.4rem; margin-block: .2rem; }
+.plan-compare__plan > .plan-compare__price { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: .25rem; }
+.plan-compare__price strong { color: var(--color-text); font-size: var(--text-md); }
+.plan-compare__price small { color: var(--color-text-muted); font-size: var(--text-xs); font-weight: var(--weight-body); }
+.plan-compare__saving { color: var(--color-success); font-size: var(--text-xs); }
+.plan-compare__plan.is-featured { box-shadow: inset 0 3px 0 var(--color-primary); }
+.plan-compare__plan.is-current { box-shadow: inset 0 3px 0 var(--color-success); }
+.plan-compare__yes { color: var(--color-success); }
+.plan-compare__no { color: var(--color-text-subtle); }
+.plan-compare__table tr.is-highlight > * { background: var(--color-primary-soft); }
+.plan-compare__table tr.is-highlight th[scope="row"] { color: var(--color-primary-text); font-weight: var(--weight-strong); box-shadow: inset 3px 0 0 var(--color-primary); }
+[dir="rtl"] .plan-compare__table tr.is-highlight th[scope="row"] { box-shadow: inset -3px 0 0 var(--color-primary); }
+.plan-compare__actions td { padding-block: var(--space-3); }
+.plan-compare__note { margin: 0; padding: var(--space-3) var(--space-5) var(--space-4); color: var(--color-text-muted); font-size: var(--text-xs); }
+
+@media (max-width: 64rem) {
+    .plan-overview { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 40rem) {
+    .plan-hero { padding: var(--space-4); }
+    .plan-hero__price { justify-items: start; text-align: start; }
+    .plan-compare__focus { margin-inline: var(--space-4); }
+    .plan-compare__table tbody th[scope="row"], .plan-compare__corner { min-width: 9rem; }
+}
+
+/* ══ Support desk ═══════════════════════════════════════════════════════ */
+.support-files { gap: var(--space-2); }
+.support-files__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.support-files__row .field-help { margin: 0; }
+.support-files__loading { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--color-text-muted); font-size: var(--text-xs); }
+.support-files__list .chip { gap: .35rem; max-width: 100%; padding-inline-end: .2rem; }
+.support-files__list .chip .truncate { max-width: 14rem; }
+.support-ticket__closed { display: flex; align-items: center; gap: var(--space-2); margin: 0; padding: var(--space-4) var(--space-5); border-block-start: 1px solid var(--color-divider); color: var(--color-text-muted); font-size: var(--text-sm); }
+
+/* ══ Feature-locked 403 (outside Livewire) ══════════════════════════════ */
+.feature-locked-page--standalone { min-height: 100vh; padding: var(--space-8) var(--space-4); background: var(--color-canvas); }

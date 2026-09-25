@@ -17,8 +17,15 @@ use Illuminate\Support\Str;
  * @property int $id
  * @property string $tenant_id
  * @property int $plan_id
+ * @property int|null $price_minor_snapshot
+ * @property string|null $currency_snapshot
+ * @property string|null $billing_period_snapshot
+ * @property array<string, string>|null $plan_name_snapshot
  * @property SubscriptionStatus $status
  * @property Carbon|null $trial_ends_at
+ * @property Carbon|null $current_period_start
+ * @property Carbon|null $current_period_end
+ * @property Carbon|null $grace_ends_at
  */
 final class Subscription extends Model
 {
@@ -41,6 +48,8 @@ final class Subscription extends Model
             'current_period_end' => 'datetime',
             'grace_ends_at' => 'datetime',
             'cancelled_at' => 'datetime',
+            'price_minor_snapshot' => 'integer',
+            'plan_name_snapshot' => 'array',
         ];
     }
 
@@ -102,7 +111,7 @@ final class Subscription extends Model
     /**
      * Whole days left in the trial, floored at zero.
      *
-     * The reminder jobs in Phase 13 read this; nothing sends anything yet.
+     * The reminder jobs in Phase 14 read this; nothing sends anything yet.
      */
     public function trialDaysRemaining(?Carbon $now = null): ?int
     {
@@ -113,5 +122,21 @@ final class Subscription extends Model
         $now ??= Carbon::now();
 
         return max(0, (int) $now->diffInDays($this->trial_ends_at, false));
+    }
+
+    /**
+     * Days of trial left as a person counts them: calendar days from today to
+     * the day the trial ends, whatever the time of day on either side. A new
+     * 14-day trial reads "14 days", not "13".
+     */
+    public function trialDaysLeft(?Carbon $now = null): ?int
+    {
+        if ($this->trial_ends_at === null) {
+            return null;
+        }
+
+        $today = ($now ?? Carbon::now())->copy()->startOfDay();
+
+        return max(0, (int) $today->diffInDays($this->trial_ends_at->copy()->startOfDay(), false));
     }
 }

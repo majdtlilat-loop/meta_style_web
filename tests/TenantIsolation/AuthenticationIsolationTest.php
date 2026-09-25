@@ -6,7 +6,6 @@ use App\Kernel\Audit\Models\PlatformAuditLog;
 use App\Kernel\Identity\Models\User;
 use App\Kernel\Identity\TenantApiToken;
 use App\Kernel\Tenancy\Contracts\TenantContext;
-use App\Kernel\Tenancy\Infrastructure\TenantModel;
 use Illuminate\Support\Facades\DB;
 
 /*
@@ -75,12 +74,8 @@ it('rejects and audits a host that disagrees with the token', function (): void 
     $alpha = $this->registerCenter('Alpha', 'owner@alpha.test');
     $beta = $this->registerCenter('Beta', 'owner@beta.test');
 
-    // Give Beta a host, then present Alpha's token against it.
-    TenantModel::query()->findOrFail($beta['tenant']->id)
-        ->domains()->create(['domain' => 'beta.metastyle.test', 'is_primary' => true]);
-
     $this->withHeaders($this->tokenHeaders($this->apiTokenFor($alpha['tenant'])))
-        ->getJson('http://beta.metastyle.test/api/v1/tenant/me')
+        ->getJson('http://beta.localhost:8000/api/v1/tenant/me')
         ->assertForbidden()
         ->assertJsonPath('error.code', 'TENANT.RESOLUTION_CONFLICT');
 

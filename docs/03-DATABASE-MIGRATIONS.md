@@ -82,7 +82,7 @@ All under the `metastyle:` namespace.
 | Command | Purpose | Status |
 |---|---|---|
 | `metastyle:control:migrate` | Migrate the control database. | Live |
-| `metastyle:tenant:provision "<name>" --domain=<host>` | Full provisioning pipeline (`02-TENANCY.md` §8.2). | Live |
+| `metastyle:tenant:provision "<name>" --domain=<host> --slug=<slug>` | Full provisioning pipeline (`02-TENANCY.md` §8.2). `--slug` labels the database (ADR-106). | Live |
 | `metastyle:tenant:provision "<name>" --retry=<id>` | Resume a failed provision. | Live |
 | `metastyle:tenant:migrate --tenant=<id>` | Migrate one tenant, with output. | Live |
 | `metastyle:tenant:migrate --all` | Migrate every migratable tenant, one independent attempt each. | Live |
@@ -99,8 +99,10 @@ every tenant has had its turn.
 
 - Every destructive command refuses to run when `APP_ENV=production` unless
   `--force` **and** an interactive typed confirmation of the tenant's name.
-- Every command that drops a database validates the name against the
-  `tenant_[0-9]{6}` pattern first.
+- Every command that drops a database validates the name with
+  `TenantDatabaseName::assertValid()` first, never a hand-written pattern. It
+  accepts `tenant_{label}_{sequence}` (ADR-106) and the legacy
+  `tenant_{sequence}`.
 - `--all` refuses to run if the control database itself has pending migrations.
 
 ### 3.2 Migrations never create databases
@@ -361,7 +363,7 @@ Phase 3   plans · entitlements · entitlement_dependencies · plan_entitlements
 Phase 4   languages
 Phase 10  saas_invoices · saas_invoice_lines · saas_payments · saas_credit_notes
           payment_providers
-Phase 17  white_label_apps
+Phase 18  white_label_apps
 ```
 
 Note what is **not** in the control plane at all: tenant payment credentials.

@@ -1,227 +1,261 @@
 {{--
-    The service catalog.
+    Manager › Services — the service library.
 
-    Prices are typed in major units and converted through Money as a STRING —
-    a float would lose a fils on "25.10" (docs/10-API-FOUNDATION.md §9). A blank
-    variation price means "follow the service", not zero (ADR-037).
+    Categories down the side (drag, or Move up / Move down), their services as
+    ordered lists. Every change is one Catalog Action; the drawers, the photo
+    gallery and the quick add are child components that announce
+    `catalog-changed`. No logic here: the component and LibraryPresenter hand
+    over plain arrays.
 --}}
-<div>
-    <h1>{{ __('Services') }}</h1>
-    <p class="sub">{{ __('Departments organise the business. Categories organise the menu. Services are what you sell.') }}</p>
+<div class="catalog">
+    <x-ui.page-header :title="__('manager_catalog.title')">
+        <x-slot:meta>
+            <span class="result-count">
+                {{ trans_choice('manager_catalog.summary.services', $library['live'], ['count' => number_format($library['live'])]) }}
+                · {{ trans_choice('manager_catalog.summary.categories', count($categories), ['count' => number_format(count($categories))]) }}
+            </span>
+        </x-slot:meta>
+        @if($can['categories'] || $can['create'])
+            <x-slot:actions>
+                @if($can['categories'])
+                    <x-ui.button variant="secondary" icon="plus" wire:click="$dispatchTo('center.catalog.category-editor', 'catalog-create-category')">{{ __('manager_catalog.actions.add_category') }}</x-ui.button>
+                @endif
+                @if($can['create'])
+                    <x-ui.button icon="plus" wire:click="$dispatchTo('center.catalog.service-editor', 'catalog-create-service', { category: '{{ $category }}' })">{{ __('manager_catalog.actions.add_service') }}</x-ui.button>
+                @endif
+            </x-slot:actions>
+        @endif
+    </x-ui.page-header>
 
-    @if ($notice !== '')
-        <p class="notice">{{ $notice }}</p>
-    @endif
+    <x-ui.notice :message="$notice" :tone="$noticeTone" dismiss="dismissNotice" />
 
-    <div class="card">
-        <table class="list">
-            <thead>
-                <tr>
-                    <th>{{ __('Service') }}</th>
-                    <th>{{ __('Department') }}</th>
-                    <th>{{ __('Duration') }}</th>
-                    <th>{{ __('Price') }}</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse ($services as $service)
-                    <tr>
-                        <td>
-                            <strong>{{ $service->name?->get() }}</strong>
-                            @unless ($service->is_public)
-                                <span class="tag">{{ __('Not on menu') }}</span>
-                            @endunless
-                            @unless ($service->is_active)
-                                <span class="tag">{{ __('Inactive') }}</span>
-                            @endunless
-                            @if ($service->variations->isNotEmpty())
-                                <div class="sub">
-                                    {{ $service->variations->count() }} {{ __('variation(s)') }}
-                                </div>
-                            @endif
-                        </td>
-                        <td>{{ $service->department?->name?->get() ?? '—' }}</td>
-                        <td>{{ $service->duration_minutes }} {{ __('min') }}</td>
-                        <td>{{ $service->price($currency)->formatted() }}</td>
-                        <td class="actions">
-                            @if ($canManageCatalog)
-                                <button type="button" wire:click="editService('{{ $service->uuid }}')">{{ __('Edit') }}</button>
-                            @endif
-                            @if ($canArchive)
-                                <button type="button" wire:click="archiveService('{{ $service->uuid }}')"
-                                    wire:confirm="{{ __('Archive this service? It stays on past invoices.') }}">
-                                    {{ __('Archive') }}
-                                </button>
-                            @endif
-                        </td>
-                    </tr>
-                @empty
-                    <tr><td colspan="5" class="sub">{{ __('No services yet.') }}</td></tr>
-                @endforelse
-            </tbody>
-        </table>
-    </div>
-
-    @if ($canManageGroups)
-        <h2>{{ __('Departments and categories') }}</h2>
-
-        <div class="card">
-            <p class="sub">
-                {{ __('A department is operational — Hair, Laser, Hammam. A category is how the menu is grouped for customers. A service can have both.') }}
-            </p>
-
-            <div class="two-up">
-                <div>
-                    <h3>{{ __('Departments') }}</h3>
-                    <ul>
-                        @forelse ($departments as $department)
-                            <li>{{ $department->name?->get() }}</li>
-                        @empty
-                            <li class="sub">{{ __('None yet.') }}</li>
-                        @endforelse
-                    </ul>
+    @if($emptyLibrary)
+        <x-ui.card>
+            <x-ui.empty-state icon="catalog" :title="__('manager_catalog.empty.library_title')">
+                <div class="cluster cluster--tight catalog-empty__actions">
+                    @if($can['create'])
+                        <x-ui.button icon="plus" wire:click="$dispatchTo('center.catalog.service-editor', 'catalog-create-service')">{{ __('manager_catalog.actions.add_service') }}</x-ui.button>
+                    @endif
+                    @if($can['categories'])
+                        <x-ui.button variant="secondary" icon="plus" wire:click="$dispatchTo('center.catalog.category-editor', 'catalog-create-category')">{{ __('manager_catalog.actions.add_category') }}</x-ui.button>
+                    @endif
                 </div>
-                <div>
-                    <h3>{{ __('Menu categories') }}</h3>
-                    <ul>
-                        @forelse ($categories as $category)
-                            <li>
-                                {{ $category->name?->get() }}
-                                @unless ($category->is_public)
-                                    <span class="tag">{{ __('Hidden') }}</span>
-                                @endunless
-                            </li>
-                        @empty
-                            <li class="sub">{{ __('None yet.') }}</li>
-                        @endforelse
-                    </ul>
+            </x-ui.empty-state>
+        </x-ui.card>
+    @else
+        <div class="catalog-layout">
+            <aside class="catalog-nav" x-data="{ open: false }" aria-labelledby="catalog-nav-title" data-float-popovers>
+                <div class="catalog-nav__head">
+                    <div class="cluster cluster--tight">
+                        <h2 id="catalog-nav-title">{{ __('manager_catalog.categories.title') }}</h2>
+                        @if($can['categories'] && $categories !== [])
+                            <span class="info-tip" title="{{ __('manager_catalog.ordering.categories_hint') }}" aria-label="{{ __('manager_catalog.ordering.categories_hint') }}" role="img"><x-ui.icon name="info" size="16" /></span>
+                        @endif
+                    </div>
+                    @if($can['categories'])
+                        <button type="button" class="icon-button icon-button--sm" wire:click="$dispatchTo('center.catalog.category-editor', 'catalog-create-category')" aria-label="{{ __('manager_catalog.actions.add_category') }}" title="{{ __('manager_catalog.actions.add_category') }}"><x-ui.icon name="plus" size="16" /></button>
+                    @endif
                 </div>
-            </div>
 
-            <form wire:submit="saveGroup">
-                <label for="groupKind">{{ __('Add') }}</label>
-                <select id="groupKind" wire:model="groupKind">
-                    <option value="department">{{ __('Department') }}</option>
-                    <option value="category">{{ __('Menu category') }}</option>
-                </select>
+                <button type="button" class="catalog-nav__toggle" x-on:click="open = ! open" :aria-expanded="open ? 'true' : 'false'" aria-controls="catalog-nav-body">
+                    <x-ui.icon name="layers" size="16" />
+                    <span>{{ $currentLabel }}</span>
+                    <x-ui.icon name="chevron-down" size="16" />
+                </button>
 
-                @foreach ($locales as $locale)
-                    <label for="group-{{ $locale }}">{{ __('Name') }} ({{ $locale }})</label>
-                    <input id="group-{{ $locale }}" type="text" wire:model="groupName.{{ $locale }}">
-                @endforeach
-                @error('groupName') <p class="error">{{ $message }}</p> @enderror
+                <div id="catalog-nav-body" class="catalog-nav__body" :class="{ 'is-open': open }">
+                    <button type="button" class="catalog-nav__entry" wire:click="selectCategory('')" x-on:click="open = false" aria-pressed="{{ $category === '' ? 'true' : 'false' }}">
+                        <span class="catalog-nav__icon" aria-hidden="true"><x-ui.icon name="grid" size="16" /></span>
+                        <span class="catalog-nav__label">{{ __('manager_catalog.categories.all') }}</span>
+                        <span class="catalog-nav__count">{{ number_format($library['live']) }}</span>
+                    </button>
 
-                <button type="submit" class="btn">{{ __('Add') }}</button>
-            </form>
+                    @if($categories !== [])
+                        <ul class="catalog-cats" role="list" @if($can['categories']) x-data x-sortable="moveCategory" data-sortable-group="categories" @endif>
+                            @foreach($categories as $row)
+                                <li @class(['catalog-cat', 'is-selected' => $category === $row['uuid'], 'is-inactive' => ! $row['active']]) data-sortable-item="{{ $row['uuid'] }}" wire:key="cat-{{ $row['uuid'] }}">
+                                    @if($can['categories'])
+                                        <button type="button" class="catalog-cat__handle" data-sortable-handle aria-label="{{ __('manager_catalog.categories.drag', ['name' => $row['name']]) }}" title="{{ __('manager_catalog.ordering.drag_hint') }}"><x-ui.icon name="grip" size="14" /></button>
+                                    @endif
+                                    <button type="button" class="catalog-cat__select" wire:click="selectCategory('{{ $row['uuid'] }}')" x-on:click="open = false" aria-pressed="{{ $category === $row['uuid'] ? 'true' : 'false' }}">
+                                        @if($row['image'])
+                                            <img class="catalog-cat__thumb" src="{{ $row['image'] }}" alt="" loading="lazy">
+                                        @else
+                                            <span class="catalog-cat__thumb" aria-hidden="true">{{ $row['initial'] }}</span>
+                                        @endif
+                                        <span class="catalog-cat__name">{{ $row['name'] }}</span>
+                                        @unless($row['public'])
+                                            <span class="catalog-cat__flag" title="{{ __('manager_catalog.states.hidden') }}"><x-ui.icon name="eye-off" size="14" /><span class="sr-only">{{ __('manager_catalog.states.hidden') }}</span></span>
+                                        @endunless
+                                        @unless($row['active'])
+                                            <span class="sr-only">{{ __('ui.states.inactive') }}</span>
+                                        @endunless
+                                        <span class="catalog-nav__count">{{ number_format($row['count']) }}</span>
+                                    </button>
+                                    @if($can['categories'])
+                                        <div class="catalog-cat__tools">
+                                            <button type="button" class="icon-button icon-button--xs" wire:click="moveCategoryBy('{{ $row['uuid'] }}', -1)" @disabled($loop->first) aria-label="{{ __('manager_catalog.ordering.move_up', ['name' => $row['name']]) }}" title="{{ __('ui.actions.move_up') }}"><x-ui.icon name="arrow-up" size="14" /></button>
+                                            <button type="button" class="icon-button icon-button--xs" wire:click="moveCategoryBy('{{ $row['uuid'] }}', 1)" @disabled($loop->last) aria-label="{{ __('manager_catalog.ordering.move_down', ['name' => $row['name']]) }}" title="{{ __('ui.actions.move_down') }}"><x-ui.icon name="arrow-down" size="14" /></button>
+                                            <details class="dropdown" data-popover>
+                                                <summary class="icon-button icon-button--xs" aria-label="{{ __('manager_catalog.categories.actions', ['name' => $row['name']]) }}" title="{{ __('ui.actions.more') }}"><x-ui.icon name="more" size="14" /></summary>
+                                                <div class="dropdown__panel" role="menu">
+                                                    <button class="menu-item" role="menuitem" type="button" wire:click="$dispatchTo('center.catalog.category-editor', 'catalog-edit-category', { uuid: '{{ $row['uuid'] }}' })"><x-ui.icon name="edit" />{{ __('manager_catalog.categories.edit') }}</button>
+                                                    <button class="menu-item" role="menuitem" type="button" wire:click="setCategoryPublic('{{ $row['uuid'] }}', {{ $row['public'] ? 'false' : 'true' }})"><x-ui.icon :name="$row['public'] ? 'eye-off' : 'eye'" />{{ $row['public'] ? __('manager_catalog.actions.hide') : __('manager_catalog.actions.show') }}</button>
+                                                    <button class="menu-item" role="menuitem" type="button" wire:click="setCategoryActive('{{ $row['uuid'] }}', {{ $row['active'] ? 'false' : 'true' }})"><x-ui.icon :name="$row['active'] ? 'pause' : 'play'" />{{ $row['active'] ? __('ui.actions.deactivate') : __('ui.actions.activate') }}</button>
+                                                    <div class="menu-separator" role="separator"></div>
+                                                    <button class="menu-item menu-item--danger" role="menuitem" type="button" wire:click="archiveCategory('{{ $row['uuid'] }}')"
+                                                        wire:confirm="{{ trans_choice('manager_catalog.categories.archive_confirm', $row['count'], ['count' => $row['count'], 'name' => $row['name']]) }}"
+                                                        data-confirm-title="{{ __('manager_catalog.categories.archive_title') }}" data-confirm-tone="danger"><x-ui.icon name="archive" />{{ __('ui.actions.archive') }}</button>
+                                                </div>
+                                            </details>
+                                        </div>
+                                    @endif
+                                    @if($can['update'])
+                                        <ul class="catalog-drop" data-sortable-group="services" data-sortable-container="end:{{ $row['uuid'] }}" aria-hidden="true"></ul>
+                                    @endif
+                                </li>
+                            @endforeach
+                        </ul>
+                    @endif
+
+                    <div @class(['catalog-cat', 'catalog-cat--fixed', 'is-selected' => $category === 'none'])>
+                        <button type="button" class="catalog-cat__select" wire:click="selectCategory('none')" x-on:click="open = false" aria-pressed="{{ $category === 'none' ? 'true' : 'false' }}">
+                            <span class="catalog-cat__thumb catalog-cat__thumb--muted" aria-hidden="true"><x-ui.icon name="tag" size="14" /></span>
+                            <span class="catalog-cat__name">{{ __('manager_catalog.categories.uncategorised') }}</span>
+                            <span class="catalog-nav__count">{{ number_format($library['uncategorised']) }}</span>
+                        </button>
+                        @if($can['update'])
+                            <ul class="catalog-drop" data-sortable-group="services" data-sortable-container="end:none" aria-hidden="true"></ul>
+                        @endif
+                    </div>
+
+                    @if($archivedCategories !== [])
+                        <details class="catalog-nav__archived">
+                            <summary>{{ __('manager_catalog.categories.archived', ['count' => count($archivedCategories)]) }}</summary>
+                            <ul role="list">
+                                @foreach($archivedCategories as $row)
+                                    <li wire:key="archived-cat-{{ $row['uuid'] }}">
+                                        <span>{{ $row['name'] }}</span>
+                                        <button type="button" class="button button--ghost button--sm" wire:click="restoreCategory('{{ $row['uuid'] }}')"><x-ui.icon name="undo" size="14" />{{ __('ui.actions.restore') }}</button>
+                                    </li>
+                                @endforeach
+                            </ul>
+                        </details>
+                    @endif
+                </div>
+            </aside>
+
+            <section class="catalog-main" aria-labelledby="catalog-main-title">
+                @if($selected)
+                    <header class="catalog-heading">
+                        @if($selected['image'])
+                            <img class="catalog-heading__image" src="{{ $selected['image'] }}" alt="">
+                        @endif
+                        <div class="catalog-heading__text">
+                            <h2 id="catalog-main-title">{{ $selected['name'] }}</h2>
+                            @if($selected['description'] !== '')
+                                <p>{{ $selected['description'] }}</p>
+                            @endif
+                            <div class="cluster cluster--tight">
+                                <x-ui.status :value="$selected['active'] ? 'active' : 'inactive'" :label="$selected['active'] ? __('ui.states.active') : __('ui.states.inactive')" />
+                                <span class="badge" data-tone="{{ $selected['public'] ? 'success' : 'neutral' }}"><x-ui.icon :name="$selected['public'] ? 'eye' : 'eye-off'" size="12" />{{ $selected['public'] ? __('manager_catalog.states.on_menu') : __('manager_catalog.states.hidden') }}</span>
+                            </div>
+                        </div>
+                        @if($can['categories'])
+                            <x-ui.button variant="secondary" size="sm" icon="edit" wire:click="$dispatchTo('center.catalog.category-editor', 'catalog-edit-category', { uuid: '{{ $selected['uuid'] }}' })">{{ __('manager_catalog.categories.edit') }}</x-ui.button>
+                        @endif
+                    </header>
+                @else
+                    <h2 id="catalog-main-title" class="sr-only">{{ $currentLabel }}</h2>
+                @endif
+
+                <div class="catalog-toolbar" role="search" aria-label="{{ __('manager_catalog.filters.label') }}">
+                    <div class="search-input catalog-toolbar__search">
+                        <x-ui.icon name="search" />
+                        <input id="catalog-search" type="search" wire:model.live.debounce.300ms="search" placeholder="{{ __('manager_catalog.filters.search') }}" aria-label="{{ __('manager_catalog.filters.search') }}" autocomplete="off">
+                    </div>
+                    <div class="segmented segmented--scroll" role="group" aria-label="{{ __('manager_catalog.filters.status') }}">
+                        @foreach($statusTabs as $tab)
+                            <button type="button" wire:click="setStatus('{{ $tab['value'] }}')" aria-pressed="{{ $status === $tab['value'] ? 'true' : 'false' }}">{{ $tab['label'] }}<span class="segmented__count">{{ number_format($tab['count']) }}</span></button>
+                        @endforeach
+                    </div>
+                    <label class="sr-only" for="catalog-visibility">{{ __('manager_catalog.filters.visibility') }}</label>
+                    <select id="catalog-visibility" class="catalog-toolbar__select" wire:model.live="visibility">
+                        @foreach($visibilityOptions as $option)
+                            <option value="{{ $option['value'] }}">{{ $option['label'] }}</option>
+                        @endforeach
+                    </select>
+                    @if($filtered)
+                        <button type="button" class="button button--ghost button--sm" wire:click="clearFilters"><x-ui.icon name="close" size="16" />{{ __('ui.actions.clear_filters') }}</button>
+                    @endif
+                </div>
+
+                @if($filtered && $can['update'] && ! $noMatches)
+                    <p class="catalog-hint"><x-ui.icon name="info" size="14" />{{ __('manager_catalog.ordering.filtered') }}</p>
+                @endif
+
+                @if($can['create'] && $status !== 'archived')
+                    <livewire:center.catalog.quick-add :category="$category" wire:key="catalog-quick-add" />
+                @endif
+
+                <div class="catalog-lists" data-float-popovers wire:loading.class="is-refreshing" wire:target="search,status,setStatus,visibility,selectCategory,clearFilters">
+                    @if($noMatches)
+                        <x-ui.card>
+                            <x-ui.empty-state icon="filter" :title="__('manager_catalog.empty.no_matches_title')">
+                                <button type="button" class="button button--secondary button--sm" wire:click="clearFilters">{{ __('ui.actions.clear_filters') }}</button>
+                            </x-ui.empty-state>
+                        </x-ui.card>
+                    @else
+                        @foreach($sections as $section)
+                            <section class="catalog-section" wire:key="section-{{ $section['key'] ?? 'results' }}" @if($section['title'] !== null) aria-label="{{ $section['title'] }}" @endif>
+                                @if($section['title'] !== null)
+                                    <header class="catalog-section__head">
+                                        @if($section['key'] !== 'none')
+                                            <button type="button" class="catalog-section__title" wire:click="selectCategory('{{ $section['key'] }}')">{{ $section['title'] }}</button>
+                                        @else
+                                            <span class="catalog-section__title">{{ $section['title'] }}</span>
+                                        @endif
+                                        <span class="catalog-nav__count">{{ number_format(count($section['rows'])) }}</span>
+                                        @if($section['category'] !== null && ! $section['category']['public'])
+                                            <span class="badge" data-tone="neutral"><x-ui.icon name="eye-off" size="12" />{{ __('manager_catalog.states.hidden') }}</span>
+                                        @endif
+                                        @if($section['category'] !== null && ! $section['category']['active'])
+                                            <x-ui.status value="inactive" :label="__('ui.states.inactive')" />
+                                        @endif
+                                    </header>
+                                @endif
+                                <ul class="catalog-list" role="list" @if($section['sortable']) x-data x-sortable="moveService" data-sortable-group="services" data-sortable-container="{{ $section['key'] }}" @endif>
+                                    @forelse($section['rows'] as $row)
+                                        @include('livewire.center.catalog.partials.service-row', ['row' => $row, 'sortable' => $section['sortable'], 'first' => $loop->first, 'last' => $loop->last])
+                                    @empty
+                                        <li class="catalog-list__empty">{{ $section['sortable'] ? __('manager_catalog.sections.empty_drop') : __('manager_catalog.sections.empty') }}</li>
+                                    @endforelse
+                                </ul>
+                            </section>
+                        @endforeach
+                    @endif
+                </div>
+            </section>
         </div>
     @endif
 
-    @if ($canManageCatalog)
-        <h2>{{ $editingService ? __('Edit service') : __('Add a service') }}</h2>
-
-        <form wire:submit="saveService" class="card">
-            @foreach ($locales as $locale)
-                <label for="sname-{{ $locale }}">{{ __('Name') }} ({{ $locale }})</label>
-                <input id="sname-{{ $locale }}" type="text" wire:model="serviceName.{{ $locale }}">
-            @endforeach
-            @error('serviceName') <p class="error">{{ $message }}</p> @enderror
-
-            @foreach ($locales as $locale)
-                <label for="sdesc-{{ $locale }}">{{ __('Short description') }} ({{ $locale }})</label>
-                <input id="sdesc-{{ $locale }}" type="text" wire:model="serviceDescription.{{ $locale }}">
-            @endforeach
-
-            <div class="two-up">
-                <div>
-                    <label for="duration">{{ __('Duration (minutes)') }}</label>
-                    <input id="duration" type="number" min="1" max="1440" wire:model="duration">
-                    @error('duration') <p class="error">{{ $message }}</p> @enderror
-                </div>
-                <div>
-                    <label for="price">{{ __('Price') }} ({{ $currency->value }})</label>
-                    <input id="price" type="text" inputmode="decimal" wire:model="price">
-                    @error('price') <p class="error">{{ $message }}</p> @enderror
-                </div>
-            </div>
-
-            <div class="two-up">
-                <div>
-                    <label for="departmentUuid">{{ __('Department') }}</label>
-                    <select id="departmentUuid" wire:model="departmentUuid">
-                        <option value="">{{ __('None') }}</option>
-                        @foreach ($departments as $department)
-                            <option value="{{ $department->uuid }}">{{ $department->name?->get() }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div>
-                    <label for="categoryUuid">{{ __('Menu category') }}</label>
-                    <select id="categoryUuid" wire:model="categoryUuid">
-                        <option value="">{{ __('None') }}</option>
-                        @foreach ($categories as $category)
-                            <option value="{{ $category->uuid }}">{{ $category->name?->get() }}</option>
-                        @endforeach
-                    </select>
-                </div>
-            </div>
-
-            <label class="inline">
-                <input type="checkbox" wire:model="serviceActive"> {{ __('Active') }}
-            </label>
-            <label class="inline">
-                <input type="checkbox" wire:model="servicePublic"> {{ __('Show on the public menu') }}
-            </label>
-            <label class="inline">
-                <input type="checkbox" wire:model.live="allBranches"> {{ __('Available at every branch') }}
-            </label>
-
-            @unless ($allBranches)
-                <label>{{ __('Available at') }}</label>
-                @foreach ($branches as $branch)
-                    <label class="inline">
-                        <input type="checkbox" value="{{ $branch->uuid }}" wire:model="branchUuids">
-                        {{ $branch->name?->get() }}
-                    </label>
-                @endforeach
-            @endunless
-
-            <h3>{{ __('Who may perform this') }}</h3>
-            <p class="sub">{{ __('Eligibility only. Schedules and availability come with booking.') }}</p>
-            @forelse ($employees as $employee)
-                <label class="inline">
-                    <input type="checkbox" value="{{ $employee->uuid }}" wire:model="employeeUuids">
-                    {{ $employee->name?->get() }}
-                </label>
-            @empty
-                <p class="sub">{{ __('No employees yet.') }}</p>
-            @endforelse
-
-            <h3>{{ __('Variations') }}</h3>
-            <p class="sub">
-                {{ __('Leave a price blank to follow the service price. It will keep following it when the service price changes.') }}
-            </p>
-
-            @foreach ($variations as $index => $variation)
-                <div class="row">
-                    @foreach ($locales as $locale)
-                        <input type="text" wire:model="variations.{{ $index }}.name.{{ $locale }}"
-                            placeholder="{{ __('Name') }} ({{ $locale }})"
-                            aria-label="{{ __('Variation name') }} ({{ $locale }})">
+    @if($moving)
+        <x-ui.modal :title="__('manager_catalog.move.title', ['name' => $moving['name']])" icon="move" close="cancelMove" submit="confirmMove">
+            <x-ui.field :label="__('manager_catalog.move.target')" for="catalog-move-target">
+                <select id="catalog-move-target" wire:model="moveTarget">
+                    @foreach($categories as $row)
+                        <option value="{{ $row['uuid'] }}">{{ $row['name'] }}@if($row['uuid'] === $moving['category']) · {{ __('manager_catalog.move.current') }}@endif</option>
                     @endforeach
-                    <input type="text" inputmode="decimal" wire:model="variations.{{ $index }}.price"
-                        placeholder="{{ __('Price') }}" aria-label="{{ __('Variation price') }}">
-                    <input type="number" wire:model="variations.{{ $index }}.duration"
-                        placeholder="{{ __('Minutes') }}" aria-label="{{ __('Variation duration') }}">
-                    <button type="button" wire:click="removeVariation({{ $index }})">{{ __('Remove') }}</button>
-                </div>
-            @endforeach
-
-            <p>
-                <button type="button" wire:click="addVariation">{{ __('Add a variation') }}</button>
-            </p>
-
-            <button type="submit" class="btn">{{ __('Save service') }}</button>
-        </form>
+                    <option value="none">{{ __('manager_catalog.categories.uncategorised') }}@if($moving['category'] === 'none') · {{ __('manager_catalog.move.current') }}@endif</option>
+                </select>
+            </x-ui.field>
+            <x-slot:footer>
+                <button class="button button--secondary" type="button" wire:click="cancelMove">{{ __('ui.actions.cancel') }}</button>
+                <button class="button" type="submit" wire:loading.attr="disabled" wire:target="confirmMove"><x-ui.icon name="move" size="16" />{{ __('manager_catalog.move.submit') }}</button>
+            </x-slot:footer>
+        </x-ui.modal>
     @endif
+
+    <livewire:center.catalog.service-editor wire:key="catalog-service-editor" />
+    <livewire:center.catalog.category-editor wire:key="catalog-category-editor" />
 </div>

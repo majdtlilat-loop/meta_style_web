@@ -1,6 +1,7 @@
 <?php
 
 use App\Kernel\Identity\Models\User;
+use App\Kernel\Platform\Identity\Models\PlatformUser;
 use App\Modules\Customers\Domain\Models\CustomerAccount;
 
 /*
@@ -34,6 +35,10 @@ return [
     ],
 
     'guards' => [
+        'platform' => [
+            'driver' => 'session',
+            'provider' => 'platform_users',
+        ],
         // First-party web (Blade + Livewire), standard Laravel session.
         'web' => [
             'driver' => 'session',
@@ -70,6 +75,10 @@ return [
     ],
 
     'providers' => [
+        'platform_users' => [
+            'driver' => 'eloquent',
+            'model' => PlatformUser::class,
+        ],
         'staff' => [
             'driver' => 'eloquent',
             'model' => User::class,
@@ -85,6 +94,22 @@ return [
     ],
 
     'passwords' => [
+        'platform' => [
+            'provider' => 'platform_users',
+            'connection' => 'control',
+            'table' => 'platform_password_reset_tokens',
+            'expire' => 30,
+            'throttle' => 60,
+        ],
+        // Same table, longer window: the first link a new platform user gets
+        // (they have never set a password). Resets keep the 30-minute window.
+        'platform_invitations' => [
+            'provider' => 'platform_users',
+            'connection' => 'control',
+            'table' => 'platform_password_reset_tokens',
+            'expire' => 4320,
+            'throttle' => 60,
+        ],
         'staff' => [
             'provider' => 'staff',
             'table' => 'password_reset_tokens',

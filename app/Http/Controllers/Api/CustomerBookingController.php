@@ -121,7 +121,7 @@ final class CustomerBookingController extends Controller
             'note' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $appointment = $engine->book(
+        $booked = $engine->book(
             new BookingRequest(
                 branchUuid: (string) $data['branch'],
                 lines: BookingLine::listFromArray($data['services']),
@@ -133,7 +133,13 @@ final class CustomerBookingController extends Controller
             BookingActor::customer($account, $this->label($account)),
         );
 
-        return ApiResponse::data($presenter->forCustomer($appointment->load(['items.employee', 'items.addons', 'branch'])), 201);
+        return ApiResponse::data(
+            $presenter->withVerificationCode(
+                $presenter->forCustomer($booked->appointment->load(['items.employee', 'items.addons', 'branch'])),
+                $booked->verificationCode,
+            ),
+            201,
+        );
     }
 
     public function reschedule(

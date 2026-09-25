@@ -42,7 +42,7 @@ function bookForLifecycle(array $seed, string $at = '10:00'): Appointment
             customer: CustomerRef::details('Sara Ahmed', '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 it('describes the transitions it allows, and refuses everything else', function (): void {
@@ -210,7 +210,7 @@ it('refuses to mark an appointment as a no-show before it has started', function
                 customer: CustomerRef::details('Sara Ahmed', '+9647501112233'),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         // A customer who has not arrived yet cannot have failed to arrive.
         // Without this guard "no-show" becomes a second, worse cancel button
@@ -261,7 +261,7 @@ it('moves the whole visit when an appointment is rescheduled', function (): void
                 customer: CustomerRef::details('Sara Ahmed', '+9647509998877'),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         $originalUuid = $appointment->uuid;
 

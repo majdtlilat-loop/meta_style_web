@@ -6,6 +6,7 @@ namespace App\Modules\Queue\Application;
 
 use App\Kernel\Entitlements\Entitlements;
 use App\Kernel\Localization\LanguageRegistry;
+use App\Kernel\Privacy\Fingerprint;
 use App\Kernel\Time\BranchClock;
 use App\Modules\Queue\Domain\Models\QueueDisplay;
 use App\Modules\Queue\Domain\Models\QueueTicket;
@@ -32,10 +33,26 @@ use Carbon\CarbonImmutable;
  * something new was SAID, it would either repeat the same number forever or
  * have to guess from timestamps.
  *
- * `announcement_id` is the uuid of the call event. A poll that sees the same
- * ids says nothing; a recall writes a new event with a new uuid and the screen
- * speaks again. That is the whole mechanism, and it is why the browser needs no
- * memory beyond "which ids have I already spoken" (correction 2).
+ * `announcement_id` stands for the call event: a poll that sees the same ids
+ * says nothing; a recall writes a new event and the screen speaks again. That
+ * is the whole mechanism, and it is why the browser needs no memory beyond
+ * "which ids have I already spoken" (correction 2).
+ *
+ * It is never the event's uuid. Every `announcement_id` on the wire — each
+ * line's, and the speech payload's — is the same keyed digest as `call_key`
+ * below, so a public screen publishes no internal identifier (§13).
+ *
+ * ## The new-call key, for every screen
+ *
+ * The speech payload goes only to a screen that may SPEAK, but a screen with
+ * its chime on and its voice off (or without `queue_voice`) still has to know
+ * that somebody new was called. `call_key` answers that for every screen: a
+ * keyed digest of the current call event, scoped to this screen, present
+ * whenever a call is on screen and changing only when a call or a recall
+ * writes a new event. The screen chimes once per key; a poll that sees the
+ * same key, and a language switch, do nothing. It is not an id: a digest of the
+ * event under `APP_KEY` and the screen names nothing and correlates nothing
+ * across screens (§13, §16).
  *
  * ## Bounded, always
  *
@@ -56,12 +73,16 @@ final class DisplayFeed
     public function __construct(
         private readonly Entitlements $entitlements,
         private readonly LanguageRegistry $languages,
+        private readonly DisplayLanguages $displayLanguages,
+        private readonly Announcement $announcements,
     ) {}
 
     /**
+     * @param  string|null  $pin  a Manager preview pinned to one of the center's
+     *                            languages ({@see DisplayLanguages::pinnable()})
      * @return array<string, mixed>
      */
-    public function forDisplay(QueueDisplay $display, ?CarbonImmutable $now = null): array
+    public function forDisplay(QueueDisplay $display, ?CarbonImmutable $now = null, ?string $pin = null): array
     {
         // The display entitlement, separate from queue management: a center may
         // run a queue at the desk without paying for screens (§19).
@@ -98,7 +119,11 @@ final class DisplayFeed
         /** @var list<QueueTicket> $tickets */
         $tickets = $query->get()->all();
 
-        $locale = $display->locale ?? app()->getLocale();
+        // Only languages the center publishes in; a rotating screen gets its
+        // destinations named in every language it cycles (§9).
+        $screen = $this->displayLanguages->forDisplay($display, app()->getLocale(), $pin);
+        $locale = $screen['start'];
+        $locales = $screen['locales'];
 
         return [
             'display' => [
@@ -106,17 +131,29 @@ final class DisplayFeed
                 'branch_name' => $branch?->name?->get($locale),
                 'locale' => $locale,
                 'direction' => $this->languages->direction($locale),
+                'languages' => $locales,
                 'sound_enabled' => $display->sound_enabled,
                 'voice_enabled' => $this->mayAnnounce($display),
                 'voice_locales' => $display->voiceLocales(),
                 'recent_limit' => $limit,
             ],
             // The big number at the top: the most recent call.
-            'now_calling' => $tickets === [] ? null : $this->line($tickets[0], $locale),
+            'now_calling' => $tickets === [] ? null : $this->line($display, $tickets[0], $locale, $locales),
+            // "Somebody new was called", for every screen, voice or not.
+            'call_key' => $tickets === [] ? null : $this->callKey($display, $tickets[0]),
             'recent' => array_map(
-                fn (QueueTicket $ticket): array => $this->line($ticket, $locale),
+                fn (QueueTicket $ticket): array => $this->line($display, $ticket, $locale, $locales),
                 array_slice($tickets, 1, $limit),
             ),
+            /*
+             * The words, for the CURRENT call only, and only when the screen
+             * MAY speak. A silent screen carries no speech payload at all:
+             * nothing for a browser to read out, and nothing extra on the wire
+             * every three seconds (§16, §19).
+             */
+            'announcement' => $tickets !== [] && $this->mayAnnounce($display)
+                ? $this->announcements->forTicket($tickets[0], $display->voiceLocales(), $this->callKey($display, $tickets[0]))
+                : null,
             'server_time' => $at->toIso8601String(),
         ];
     }
@@ -141,25 +178,49 @@ final class DisplayFeed
     }
 
     /**
+     * The opaque key of a call: a keyed digest of the call event, scoped to
+     * this screen — `call_key`, and every `announcement_id` on the wire. Null
+     * only for a call that predates the announcement column.
+     */
+    private function callKey(QueueDisplay $display, QueueTicket $ticket): ?string
+    {
+        $event = $ticket->last_announcement_uuid;
+
+        return $event === null ? null : Fingerprint::of('queue-call|'.$display->uuid.'|'.$event);
+    }
+
+    /**
      * One row on the screen.
      *
+     * @param  list<string>  $locales  every language the screen shows
      * @return array<string, mixed>
      */
-    private function line(QueueTicket $ticket, string $locale): array
+    private function line(QueueDisplay $display, QueueTicket $ticket, string $locale, array $locales): array
     {
         $point = $ticket->servicePoint;
 
+        $names = [];
+
+        foreach ($locales as $language) {
+            $names[$language] = $point?->name->get($language);
+        }
+
         return [
             /*
-             * The stable identifier a browser uses to decide whether it has
-             * already spoken this call. Null only for a ticket whose calls
-             * predate the column, which cannot happen in a fresh install but
-             * must not make the screen unrenderable.
+             * The stable key a browser uses to decide whether it has already
+             * shown this call — the opaque digest, never the event's uuid.
+             * Null only for a ticket whose calls predate the column, which
+             * cannot happen in a fresh install but must not make the screen
+             * unrenderable.
              */
-            'announcement_id' => $ticket->last_announcement_uuid,
+            'announcement_id' => $this->callKey($display, $ticket),
             'number' => $ticket->display_number,
             'destination_code' => $point?->display_code,
             'destination_name' => $point?->name->get($locale),
+            // The same destination in each language the screen rotates
+            // through, so a language switch is a relabel on the client and
+            // never another request. Names only — never an id.
+            'destination_names' => $names,
             'department_name' => $ticket->department?->name->get($locale),
             'called_at' => $ticket->last_called_at?->toIso8601String(),
             // Whether this one is still the current call, so a screen can dim

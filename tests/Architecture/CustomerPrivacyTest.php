@@ -131,14 +131,21 @@ it('keeps contact masking in one place, never in a template', function (): void 
      * apply to it. `CustomerPresenter` is the only thing allowed to make that
      * call (docs/06-AUTH-ROLES-PERMISSIONS.md §6).
      *
-     * Three deliberate exceptions:
+     * Four deliberate exceptions:
      *   customer/account  the customer's OWN details — masking protects a
      *                     person from staff who do not need their details, not
      *                     from the person themselves
      *   menu/, branches   a branch's phone and email are business contact
      *                     details a center publishes, not personal data
+     *   superadmin layout the signed-in platform administrator's own email in
+     *                     their account menu, never a tenant customer record
      */
-    $exempt = ['livewire/customer/account', 'menu/', 'livewire/center/branches'];
+    $exempt = [
+        'livewire/customer/account',
+        'menu/',
+        'livewire/center/branches',
+        'layouts/superadmin/app.blade.php',
+    ];
 
     $violations = [];
 

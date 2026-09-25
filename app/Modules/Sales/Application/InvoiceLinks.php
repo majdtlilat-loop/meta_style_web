@@ -9,6 +9,7 @@ use App\Kernel\Tenancy\Contracts\TenantContext;
 use App\Modules\Sales\Domain\InvoiceShareToken;
 use App\Modules\Sales\Domain\Models\Invoice;
 use App\Modules\Sales\Domain\Models\InvoiceShareLink;
+use Illuminate\Routing\UrlGenerator;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -23,7 +24,10 @@ use RuntimeException;
  */
 final class InvoiceLinks
 {
-    public function __construct(private readonly TenantContext $tenants) {}
+    public function __construct(
+        private readonly TenantContext $tenants,
+        private readonly UrlGenerator $urls,
+    ) {}
 
     /**
      * Creates the invoice's live link. Runs inside the caller's transaction —
@@ -52,11 +56,20 @@ final class InvoiceLinks
 
     /**
      * The customer's URL for a secret that was just minted.
+     *
+     * On the center's own host the link is published under that host's slug —
+     * the only address a center answers on since Phase 15 (the host resolves
+     * through the domains registry, and the route segment must agree with it).
+     * Without a host (an API call or a queued job), the center's registered slug —
+     * so the link still opens on the center's own host; the public key only for
+     * a center registered before hosts existed.
      */
     public function url(#[\SensitiveParameter] string $secret): string
     {
+        $center = $this->urls->getDefaultParameters()['center'] ?? null;
+
         return route('invoice.public', [
-            'center' => $this->tenants->require()->publicKey,
+            'center' => is_string($center) && $center !== '' ? $center : ($this->tenants->require()->slug ?? $this->tenants->require()->publicKey),
             'token' => $secret,
         ]);
     }

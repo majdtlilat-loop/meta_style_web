@@ -45,6 +45,7 @@ function failProvisioningLate(string $centerName, string $email): Registration
         'center_name' => $centerName,
         'owner_name' => 'Owner of '.$centerName,
         'owner_email' => $email,
+        'owner_phone' => '+9647701234567',
         'password' => RETRY_PLAINTEXT,
         'locale' => 'en',
         'country' => 'IQ',

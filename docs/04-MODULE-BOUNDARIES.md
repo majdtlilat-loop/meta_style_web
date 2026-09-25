@@ -189,10 +189,15 @@ Appointment with no Journey.
 
 | Module | Owns | Boundary note |
 |---|---|---|
-| **POS** | Carts, sales, discounts, promo codes, tips, split/partial payment orchestration, shift open/close | Does not compute service prices — asks `Services`. Does not write invoices — asks `Invoices`. |
+| **POS** | Carts, sales, discounts, promo codes, tips, shift open/close (built as `Modules/Sales`, docs/18) | Does not compute service prices — asks `Services`. Does not write invoices — asks `Invoices`. Holds no payment state: split and partial settlement are Payments'. |
 | **Invoices** | Invoice documents, numbering, totals, taxes, templates (80mm/A4/PDF/digital), QR, versioning | Numbering is a locked, gapless per-branch sequence. Never re-renders a published invoice from live data. |
-| **Payments** | Payment provider adapters, transactions, refunds, reconciliation, tenant merchant credentials | Never holds funds. Never stores PAN/CVV/PIN/OTP. |
-| **Finance** | Center revenue, expenses, commissions, cash registers/shifts, payment-method reports, profit | **Strictly separate from `SaaS` billing.** No shared tables, no shared reports. |
+| **Payments** *(Phase 10)* | Payments against issued invoices (one attempt each, split = several), refunds, provider adapters, per-branch encrypted merchant credentials, callback records | Reads Sales; **Sales never imports Payments** — a void asks through the neutral `Sales\Contracts\SaleVoidGuard`. Never imports Finance: raises `PaymentSucceeded`/`RefundSucceeded`. Never holds funds. Never stores PAN/CVV/PIN/OTP. docs/19. |
+| **Finance** *(Phase 10)* | The center ledger (append-only), expenses and categories, counted shift closes, the finance dashboard | Reads Sales and Payments, listens to Payments' events; nothing below imports it. **Strictly separate from `SaaS` billing.** No revenue, profit or commissions in Phase 10. docs/20. |
+| **Loyalty** *(Phase 11)* | Points from collected money and visits, redemption, tiers, expiry, hand adjustments — an append-only points history | Reads Sales, Payments and Journey and hears their events AFTER commit; plugs into the till through `Sales\Application\SaleBenefits`. **Nothing below imports it**; never touches Finance. docs/21. |
+| **Memberships** *(Phase 11)* | Plans, customer memberships (snapshots), benefits and their usage history | Sold as a Sales `offering` line (`OfferingCatalog`); activated after the settling payment commits; benefits through `SaleBenefits`. Nothing below imports it. docs/21. |
+| **Packages** *(Phase 11)* | Package definitions, customer packages (snapshots), session history | Same seams as Memberships; consumed by performed service at checkout, never by Booking. Nothing below imports it. docs/21. |
+| **Reviews** *(Phase 12)* | Review invitations (capability tokens), reviews, structured service and employee ratings, moderation, the rating read model | Reads Journey, Catalog, Employees and — for traceability only — Sales' invoice. Emits `ReviewInvitationIssued` / `ReviewSubmitted`. **Nothing below imports it**, and it never touches Payments or Finance. docs/22. |
+| **Notifications** *(Phase 12)* | In-app notifications, recipients, read state, preferences; the reminder, expiry and retention sweeps | LISTENS to Booking, Journey, Sales, Memberships, Packages and Reviews and imports none of them into itself except to read what an event points at. **NOTHING anywhere imports Notifications** — three architecture tests enforce it. Never writes to Audit. docs/23. |
 | **Inventory** | Products, stock, movements, suppliers | |
 
 > **Invoice immutability.** A published invoice stores its rendered snapshot

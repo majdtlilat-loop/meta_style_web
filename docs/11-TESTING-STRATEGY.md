@@ -217,9 +217,81 @@ timeout on the Action's own session. "It waited, rolled back and consumed no
 number" is observable that way; a single PHP process cannot race itself
 (docs/18-SALES.md §§47–49).
 
+Added in Phase 10 (`PaymentsIsolationTest`, `FinanceIsolationTest`): two centers
+holding the SAME provider payment reference and colliding row ids — a signed
+callback settles only the center it names; one center's gateway account uuid under
+another center's key is refused and changes neither; an invoice link does not
+resolve for payment in another center; ledgers, expenses, drawer counts and
+dashboards stay apart when ids collide; payments and finance queries fail closed;
+no payments or finance table carries `tenant_id` or exists in the control database.
+
+Added in Phase 11 (`BenefitsIsolationTest`): the same phone number at two
+centers never shares a points balance; one center's package or membership uuid is
+unknown at another and changes nothing there; benefit queries fail closed; no
+benefit table carries `tenant_id`.
+
+Phase 11 benefit tests add two patterns of their own:
+
+- **Failure injection on the benefit side, never the money side.** A model
+  `creating` listener makes the loyalty, membership or package store fail; the
+  test asserts the payment or refund is committed and reported as succeeded,
+  `AfterCommitFailed` was reported with its label, and running the reconciler
+  twice repairs it exactly once (`LoyaltyReconciliationTest`,
+  `MembershipActivationTest`, `PackageActivationTest`).
+- **Time travel past the trial.** Expiry and term tests move weeks ahead; the
+  seeded trial lasts 21 days, after which the center is read-only and every
+  Action refuses for an unrelated reason. `SeedsBenefits::outlastTrial()` extends
+  it explicitly.
+- **Event-time replay** (`LoyaltyEventTimeTest`): the rules are changed, or the
+  entitlement granted and revoked, BETWEEN the event and its repair — so a test
+  that only checked "the points arrived" would pass while the customer got the
+  wrong number. These assert the amount, the date and the expiry. Two of them
+  also DELETE every `loyalty_earning_observations` row first, because a recovery
+  that depended on the evidence it is recovering from would look identical until
+  the day it was needed.
+- **Guard state between requests** (`NotificationSurfaceTest`): one application
+  instance serves every request in a test and the auth guard caches whoever it
+  resolved last, so a second request with a different token can be answered as
+  the FIRST user. The negative check runs first, and
+  `$this->app['auth']->forgetGuards()` separates the two — the test is refreshed,
+  never relaxed.
+- **A performer on a walk-in stage** (`SeedsReviews::customerVisit`): a walk-in
+  reserves nobody, so its stages start with no employee. An employee rating is
+  impossible without assigning one, which is the rule rather than a fixture
+  detail (docs/22-REVIEWS.md §11).
+
+A harness caveat found here: within ONE test, a later request reuses the user a
+guard already resolved for an earlier request in the same application instance.
+A staff-token-on-customer-route assertion must therefore run before any customer
+request in that test (`LoyaltySurfaceTest`) — production handles each request in
+a fresh application.
+
+Phase 10 money tests follow the Phase 9 patterns and add three:
+
+- **Concurrency** (`PaymentConcurrencyTest`) holds the sale, payment or shift lock
+  on a separate MySQL connection: a second desk collecting the last balance waits
+  and is then refused; a second refund waits and cannot exceed the payment; cash
+  waits behind a counted close.
+- **A test-only provider** (`tests/Support/FakeGatewayProvider`, never registered
+  outside tests) exercises what no verified adapter reaches yet: HMAC-signed
+  callbacks, provider refunds, scripted declines and outages. FIB is covered by
+  contract tests built from its documented request and response examples
+  (`FibProviderTest`, `Http::fake`) — which prove the adapter matches the
+  documentation, not that FIB's sandbox behaves as documented.
+- **Atomicity by injection**: the ledger insert is made to fail on the
+  `eloquent.creating` event of `FinanceEntry`, proving the payment rolls back with
+  it (`FinanceLedgerTest`); credentials encrypted under a foreign key prove every
+  surface fails closed after a key rotation (`GatewayAccountTest`).
+
+**Finance windows are branch-local days — so are the tests'.** Phase 10's first
+dashboard tests built "today" with `now()->format('Y-m-d')`, the UTC date. They
+passed all afternoon and failed after 21:00 UTC, when it is already tomorrow in
+Baghdad and the window missed everything just recorded. Tests now use
+`SeedsPayments::branchToday()`.
+
 Still to add, with the phases that make them reachable: broadcast channel
 authorisation (whenever realtime ships — ADR-052 chose polling for now), export
-download scoping (Phase 12), deprovisioning leaving other tenants untouched (when
+download scoping (Phase 13), deprovisioning leaving other tenants untouched (when
 archival ships).
 
 **A third harness caveat, and the bug it hid.** `Livewire::test()` does not go
@@ -394,9 +466,9 @@ push / PR  →  composer check
       └─ Contract (OpenAPI)                  (Phase 4+)
 ```
 
-CI runs exactly `composer check` — **the same command developers run before
-finishing**. One gate with one definition; splitting CI into its own sequence of
-tools is how CI and local slowly stop agreeing, and
+CI runs exactly `composer check` — **the same FULL gate developers run locally
+for a release candidate** (§9.1). One full gate with one definition; splitting CI
+into its own sequence of tools is how CI and local slowly stop agreeing, and
 `tests/Architecture/DatabasePortabilityTest.php` asserts both that CI invokes it
 and that it still means lint + stan + the full suite.
 
@@ -414,6 +486,89 @@ the suite is configured to use.
 - Target: the full pipeline under 12 minutes. Beyond that, developers stop
   waiting for it and start merging around it.
 
+### 9.1 Local gate tiers
+
+By Phase 13 the full suite takes **about 3.5–4 hours** on the local shared
+MariaDB (1 479 tests, 13 358 s in the last full run): nearly every Feature test
+provisions a real center database and runs every tenant migration. That is the
+right design for isolation and far too slow to be the per-change gate. So there
+are three tiers. They differ in **what runs**, never in how strict a test is.
+
+| Tier | Command | Scope | Measured | When |
+|---|---|---|---|---|
+| **FAST** | `composer check:fast` | Pint, PHPStan, `tests/Architecture` (includes `SafeguardsTest` and the portability checks), `tests/Unit` — then the module in hand, e.g. `php vendor/bin/pest tests/Feature/Payments` | ~3 min + the module | Normal iterative development |
+| **PHASE** | `composer check:phase13` | FAST + `tests/TenantIsolation` + the phase's modules + the files that directly regress on them (below) | ~75 min | Before closing a development phase, with `metastyle:doctor` |
+| **FULL** | `composer check` (`composer check:full` is an alias) | Pint, PHPStan, the whole Pest suite — **unchanged** | ~3.5–4 h | Release candidate, major architecture change, CI/nightly, explicit request |
+
+Phase 15 uses `composer check:phase15`: lint, PHPStan, Architecture, Unit, the
+whole `tests/TenantIsolation` suite, and every feature suite the Super Admin and
+the Manager surface (Phase15, Manager, SaaS, Identity, Booking, Journey, Queue,
+Conversations, RAYAN, Customers, Loyalty, Memberships, Packages, Reviews,
+Employees, Resources, Catalog, Sales, Payments, Finance, Printing, Reports, Charts,
+Usage, Notifications, Menu, CenterSite, Media, Localization) plus Foundation and
+ProductionReadiness. The Manager exposes almost every module, so this gate is
+close to the whole suite; only the API/Audit foundation and database-name unit
+files stay out. Local Phase 15 closure additionally requires
+`php artisan metastyle:doctor`. The global FULL suite is intentionally deferred
+to the final web release/pre-production verification unless explicitly
+requested. The architecture suite needs `memory_limit=2G` (phpunit.xml) since
+the Manager build.
+
+`check:phase13` runs, in one sequential Pest process: `tests/Architecture`,
+`tests/Unit`, `tests/TenantIsolation`, `tests/Feature/Conversations`,
+`tests/Feature/Rayan`, `tests/Feature/Usage`, `tests/Feature/Notifications`;
+`Booking/BookingVerificationTest`, `Booking/AppointmentLifecycleTest`,
+`Booking/GuestAndCustomerBookingTest`, `Booking/BookingSurfaceTest` and
+`Booking/BookingConcurrencyTest` (every booking now mints a reference and a
+code, and `BookingEngine::book()` returns a `BookingResult`);
+`Customers/CustomerAccountTest` and `Customers/CustomerSurfaceTest` (the
+customer-facing booking surfaces); `Saas/TrialAndEntitlementTest` (the channel
+and assistant entitlements); `Identity/SystemRoleSyncTest` (the permission
+catalog grew); `Sales/SalesSurfaceTest` (it scans EVERY route, and Phase 13
+added an unauthenticated webhook); `Menu/PublicRouteBoundaryTest` (the webhook
+is a public write); and `ProductionReadinessTest` (the doctor gained the
+verification-key check). It replaced `check:phase12`.
+
+Suites for modules Phase 13 did not change are not in it; a FULL run covers the
+rest. `Sales/SalesSurfaceTest` was added after the phase's first FULL run found
+what PHASE had missed — a file that scans every route is a direct regression
+file for any phase that adds one.
+
+Rules:
+
+- **A FULL run is not required after every ordinary phase correction.** A
+  correction runs FAST plus its affected suites; closing the phase runs PHASE.
+- **Tiers never weaken tests.** Nothing is skipped, deleted, loosened or marked
+  slow to make a tier faster. The only lever is which files a tier runs.
+- **No parallel Pest** against the shared local server.
+- **Independent runs are namespaced (ADR-085).** Two terminals, or several
+  agents, may run Pest at the same time only when each run has its own
+  namespace, which owns only its own databases:
+  `METASTYLE_TEST_DB_NAMESPACE=x DB_CONTROL_DATABASE=meta_style_test_ns_x_control METASTYLE_TENANT_DB_PREFIX=meta_style_test_ns_x_t php vendor/bin/pest …`.
+  A default run never drops a namespaced database, and a namespaced run never
+  drops anything outside `meta_style_test_ns_x_`.
+- **Report which tier ran, and the last FULL result as it was.** Phase 10 closed
+  on PHASE with the last FULL result recorded as "1205 passed / 4 obsolete tests
+  failed; all four were corrected and their affected regression suites
+  subsequently passed", not as a full pass.
+- **Run a new gate script once before relying on it.** `check:phase13` was
+  committed with its `disableProcessTimeout` callback over-escaped and fataled
+  before the first test. A gate that has never executed is not a gate.
+- **Read the runner's exit code, never the wrapper's.** A background command
+  ending in `echo` or `date` reports THAT command's status: Phase 13's first
+  FULL notification said exit 0 while the log said `EXIT_CODE=1`. End a wrapper
+  with `exit $rc`, and read the code from the log.
+- **An interrupted run has no result.** Phase 13's second FULL run was lost to a
+  power cut mid-suite. It is recorded as interrupted — neither a pass nor a
+  failure — and is not counted as an attempt. Before restarting: the server's
+  own crash recovery has completed (never `innodb_force_recovery`), no runner
+  process remains, and stale `meta_style_test_%` databases are removed only
+  through `TestDatabaseManager::drop()`, whose prefix guard is the point. Never
+  delete a data directory by hand.
+- **Each phase repoints its script** (`check:phase11` replaces `check:phase10`)
+  instead of accumulating one per phase. The directories a phase owns go in
+  whole; from other modules, only the files that exercise the new coordination.
+
 ## 10. Definition of Done
 
 A feature is not done until:
@@ -428,9 +583,13 @@ A feature is not done until:
 8. If it adds an endpoint, the OpenAPI spec is updated and the contract test passes.
 9. Architecture tests pass without a new exception being added.
 10. The relevant `/docs` file is updated in the same PR.
+11. The right gate tier is green (§9.1): FAST plus the touched module for a
+    change; PHASE plus `metastyle:doctor` to close a phase; FULL for a release
+    candidate, a major architecture change, CI/nightly, or on request.
 
 Item 10 is what keeps this documentation set alive rather than becoming
-archaeology.
+archaeology. Item 11 keeps the gate honest without making a three-hour run the
+price of every correction.
 
 ## 11. Anti-patterns
 

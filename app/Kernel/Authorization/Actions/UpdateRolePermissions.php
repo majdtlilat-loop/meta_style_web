@@ -13,14 +13,28 @@ use App\Kernel\Audit\Enums\AuditSeverity;
 use App\Kernel\Audit\Enums\AuditSource;
 use App\Kernel\Authorization\Models\Role;
 use App\Kernel\Authorization\Permission;
+use App\Kernel\Authorization\SystemRole;
 use App\Kernel\Identity\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Changes what a role may do.
  *
  * Audited as a security change with before/after, because "who could do this
  * last month" is the question an incident actually asks.
+ *
+ * Three rules:
+ *
+ *  - Nobody may ADD a permission they do not hold. Only the added codes are
+ *    checked: an editor who lacks one of the codes a role already carries can
+ *    still narrow or extend it with what they do hold, and the code they lack
+ *    stays exactly as it was. Checking the whole submitted set made such a role
+ *    impossible to save at all.
+ *  - The Owner role is read-only. It means "everything" by definition, the
+ *    deploy sync re-adds whatever it lacks, and removing role management from
+ *    it is how a center locks its owner out of its own roles.
+ *  - One transaction: a half-applied permission set is a role nobody chose.
  */
 final class UpdateRolePermissions
 {
@@ -34,25 +48,38 @@ final class UpdateRolePermissions
     public function __invoke(Role $role, array $permissions, User $actingUser): Role
     {
         if (! $actingUser->hasPermission(Permission::RolePermissionsManage)) {
-            throw new AuthorizationException('You may not change role permissions.');
+            throw new AuthorizationException(__('permissions.errors.manage_denied'));
         }
+
+        if ($role->key === SystemRole::Owner->value) {
+            throw new AuthorizationException(__('permissions.errors.owner_role_locked'));
+        }
+
+        $before = $role->permissionCodes();
 
         // Nobody may grant what they do not hold. Without this, anyone able to
         // edit roles could add every permission to a role they already have
         // and escalate in two steps.
         $held = $actingUser->permissions();
 
-        foreach ($permissions as $code) {
+        foreach (array_diff($permissions, $before) as $code) {
             if (! in_array($code, $held, true)) {
-                throw new AuthorizationException(
-                    "You may not grant [{$code}], because you do not hold it."
-                );
+                throw new AuthorizationException(__('permissions.errors.not_held', [
+                    'permission' => $this->label($code),
+                ]));
             }
         }
 
-        $before = $role->permissionCodes();
+        // ...and a code the editor does not hold is not theirs to take away
+        // either: it stays exactly as it was, whatever the form sent.
+        $permissions = array_values(array_unique([...$permissions, ...array_diff($before, $held)]));
 
-        $role->syncPermissions($permissions);
+        DB::connection('tenant')->transaction(function () use ($role, $permissions): void {
+            // Serialises two editors saving the same role at once.
+            Role::query()->whereKey($role->getKey())->lockForUpdate()->first();
+
+            $role->syncPermissions($permissions);
+        });
 
         $after = $role->refresh()->permissionCodes();
 
@@ -69,5 +96,13 @@ final class UpdateRolePermissions
         ));
 
         return $role;
+    }
+
+    private function label(string $code): string
+    {
+        $key = 'permissions.codes.'.str_replace('.', '_', $code);
+        $label = __($key);
+
+        return is_string($label) && $label !== $key ? $label : $code;
     }
 }

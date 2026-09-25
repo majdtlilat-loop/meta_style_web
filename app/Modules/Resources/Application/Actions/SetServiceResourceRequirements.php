@@ -56,7 +56,7 @@ final class SetServiceResourceRequirements
     public function __invoke(Service $service, array $requirements, User $actingUser): array
     {
         if (! $actingUser->hasPermission(Permission::ResourceManage)) {
-            throw new AuthorizationException('You may not manage resources.');
+            throw new AuthorizationException(__('manager_staff.errors.resource_denied'));
         }
 
         $wanted = $this->resolve($requirements);
@@ -120,7 +120,7 @@ final class SetServiceResourceRequirements
 
             if ($quantity < 1 || $quantity > 255) {
                 throw ValidationException::withMessages([
-                    'requirements' => 'A requirement quantity must be between 1 and 255.',
+                    'requirements' => __('manager_staff.errors.requirement_quantity'),
                 ]);
             }
 
@@ -128,7 +128,7 @@ final class SetServiceResourceRequirements
 
             if (! $type instanceof ResourceType || ! $type->isBookable()) {
                 throw ValidationException::withMessages([
-                    'requirements' => 'One of those resource types is not available.',
+                    'requirements' => __('manager_staff.errors.requirement_type'),
                 ]);
             }
 
@@ -136,7 +136,7 @@ final class SetServiceResourceRequirements
 
             if (isset($resolved[$id])) {
                 throw ValidationException::withMessages([
-                    'requirements' => 'That resource type is listed twice. Use one row with a quantity.',
+                    'requirements' => __('manager_staff.errors.requirement_duplicate'),
                 ]);
             }
 

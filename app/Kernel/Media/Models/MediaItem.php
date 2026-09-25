@@ -10,6 +10,8 @@ use App\Kernel\Media\MediaOwner;
 use App\Kernel\Storage\MediaCollection;
 use App\Kernel\Storage\MediaStore;
 use App\Kernel\Tenancy\Concerns\UsesTenantConnection;
+use App\Kernel\Tenancy\Contracts\TenantContext;
+use App\Kernel\Tenancy\PlatformHosts;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Storage;
@@ -97,6 +99,16 @@ final class MediaItem extends Model
     {
         if (! $this->collection->isPublic()) {
             return null;
+        }
+
+        // A center's public disk is rooted under tenants/{key}, which the
+        // global /storage link cannot reach: on the center's own host the file
+        // is served by the center media route instead.
+        $request = app()->bound('request') ? request() : null;
+        if ($request !== null
+            && app(TenantContext::class)->isBound()
+            && app(PlatformHosts::class)->centerSlugFromHost($request->getHost()) !== null) {
+            return $request->getSchemeAndHttpHost().'/media/'.$this->path;
         }
 
         return Storage::disk($this->collection->disk())->url($this->path);

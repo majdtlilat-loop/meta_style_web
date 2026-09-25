@@ -191,7 +191,13 @@ A first-class record, because the public URL has to name something real:
 /q/{center public key}/{display public key}
 ```
 
-Two opaque, rotatable keys. A stolen screen or a leaked link is fixed by
+Since Phase 15 the center is resolved from its OWN host: the page is
+`{center}.…/q/{display public key}` and its feed
+`{center}.…/api/v1/queue/{center slug}/displays/{display public key}`, where the
+slug in the path must agree with the host (`ResolvePublicTenant`) or the
+request fails closed with 404.
+
+The display key is opaque and rotatable. A stolen screen or a leaked link is fixed by
 `rotate()` without disturbing anything that references the row (ADR-027,
 ADR-036).
 
@@ -207,6 +213,79 @@ center-authored script on one is stored XSS against that center's own customers
 
 **Fails closed**: unknown key, inactive, archived, or entitlement withdrawn all
 answer 404, so nobody can enumerate a center's screens.
+
+### Promotional media and language rotation
+
+The same screen — not a signage product — may also play the center's own
+images and videos beside the queue, and cycle its labels through the center's
+languages. Both are presentation of that screen; neither reads or writes a
+ticket, a call or an announcement (ADR-104).
+
+**Media.** Per screen, so a branch-limited manager only touches the screens of
+their branches. The file is an ordinary `media_items` row (owner
+`queue_display` = the screen's id, public `branding` collection, at most 12 per
+screen) stored and validated on its BYTES by `StoreMediaItem`: JPEG, PNG or
+WebP images, MP4 or WebM videos (12 MB, Livewire's temporary-upload ceiling).
+Never SVG, HTML, an iframe or a URL. `queue_display_media` says how the screen
+plays it: `sort_order` (renumbered 0..n-1 under the screen's row lock, one move
+intent at a time), `is_enabled` (paused items stay listed) and an optional
+`caption` per content language (`Translatable`). Alt text for an image lives on
+the media row. Removing an item removes the row and the file together
+(`ManageMedia`). Every write is `Queue\Application\Actions\ManageDisplayMedia`:
+`queue_management` + `queue_display`, `queue.display.manage`, the screen's
+branch, and `media.upload` for storing and deleting files. No new entitlement:
+promotional media is part of the screen (`queue_display`).
+
+Screen settings: `promo_enabled` (off by default) and `promo_slide_seconds`
+(8 s, clamped 4–60). "On" with nothing playable is off — the queue keeps the
+whole screen.
+
+**Languages.** `rotation_enabled`, `rotation_locales`, `rotation_seconds` (10 s,
+clamped 5–60). `SaveDisplay` refuses a language the center has not switched on
+and rotation with fewer than two languages. `DisplayLanguages` answers on
+EVERY read: the screen's choice narrowed to the center's enabled languages, in
+the center's order — so switching Kurdish off for the center removes it from
+every screen at once, and the screen's own list is kept for when it returns.
+The first language is the screen's own when the center still publishes in it,
+else the request's, else the center default. Kurdish is labelled `KU`.
+
+**The public presentation** (`DisplayPresentation`) is an allow-list: per
+rotation language its direction, short label, branch name and every screen
+label from `queue_public.php`; the playlist as kind, media URL, mime type and
+caption/alt text per language. No row uuid, no stored path, no size. The page
+embeds it; the feed carries only `presentation_version` (a digest) and adds
+the full presentation only when the page's `?pv=` digest is stale, so an edit
+reaches the television within one poll and costs nothing the rest of the day.
+Each feed line also carries `destination_names` per rotation language.
+
+**The client** (`resources/js/queue-display/display-client.js`, inlined, ES5,
+no bundler) switches `lang`/`dir` and every label together, client-side, with
+no reload and no request. The panels keep their places (the macro layout
+follows the first language); text and in-panel order follow the current one.
+A new call is recognised by the feed's `call_key` only (§13) and acted on once:
+the screen speaks when the feed carries an `announcement` (only a screen that
+may speak gets one; the voice speaks `voice_locales`), otherwise it chimes when
+`sound_enabled` — so a screen with its chime on and its voice off, or without
+`queue_voice`, chimes for every new call. A poll that sees the same key, and a
+language switch, can never speak, chime or highlight again. The wiring of the
+controller, the rotation and the carousel is the core's `createScreen` (a
+language switch re-labels and never advances, resets or re-arms the media; it
+waits for a slide's fade; a pinned preview never starts the rotation). Videos
+are always muted and never offer sound (`createMediaElement`). A fresh call
+(under a minute old) highlights the call panel for 12 s, dims the media and
+holds the carousel still; media is its own grid cell, never overlays a
+number, and the queue keeps the larger share of a landscape screen. One poll
+loop (one request awaited at a time; a request with no answer after 20 s is
+abandoned — aborted where the browser can — and its late answer ignored, so a
+stalled connection never freezes the screen), one rotation timer, one carousel
+timer; a video whose start is merely interrupted (`AbortError`) is not counted
+as failed;
+slides are built once per playlist (a file is fetched once, one image
+preloaded ahead, a video only when its turn comes); a failed item is skipped
+and retried after five minutes; the recent list is replaced, never appended.
+Pinned by `tests/Js/queue-display-client.test.mjs` and
+`tests/Js/queue-preview-fit.test.mjs` (both run by
+`tests/Unit/Queue/QueueDisplayClientTest.php`).
 
 ## 10. Priority and ordering
 
@@ -274,8 +353,11 @@ test asserts it.
 A recall **appends**. `queue_ticket_events` gets a new row with its own uuid, and
 the ticket's `last_announcement_uuid` points at it.
 
-That uuid is what the public feed exposes as `announcement_id`. A television
-polls every three seconds and remembers which announcements it has spoken:
+The public feed never publishes that uuid. Every `announcement_id` on the wire
+— each line's and the speech payload's — is the screen's opaque key for the
+call (the same digest as `call_key`, below), which changes exactly when the
+uuid does. A television polls every three seconds and remembers which
+announcements it has spoken:
 
 - an unchanged poll sees the same id and says nothing;
 - a recall is a new event with a new id, so it speaks again;
@@ -284,6 +366,16 @@ polls every three seconds and remembers which announcements it has spoken:
 Without it the screen would either repeat the same number forever or have to
 guess from timestamps. With `called_at` overwritten in place, "called three times
 then skipped" would be unanswerable as well.
+
+The speech payload (`announcement`) goes only to a screen that may speak, so the
+feed also carries **`call_key`** for EVERY screen whenever a call is on it: a
+keyed digest (`Kernel\Privacy\Fingerprint`, under `APP_KEY`) of the current call
+event scoped to that screen — 16 hex characters, not an id, different on every
+screen for the same call. It changes exactly when `last_announcement_uuid`
+does (a call or a recall) — never when the called ticket's line moves on
+(started, held) — and is null with nobody called. The client acts once per key
+(§9, §16); a chime-only screen depends on it. The Manager's preview feed
+carries it as null, like `announcement` (§9).
 
 ## 14. Hold, skip, transfer
 
@@ -356,6 +448,12 @@ Playback belongs to the display client, through `speechSynthesis`. No TTS
 service, no stored audio, nothing to keep in step with a renamed counter. A small
 client-side announcement queue serialises utterances so a rapid recall cannot
 overlap one in flight.
+
+**Sound without voice.** A screen with its chime on and its voice off — or
+voice on without `queue_voice` — gets no speech payload, and chimes once per new
+`call_key` instead (§13). A screen with both off stays silent; the Manager's
+preview never speaks or chimes (its feed carries no `announcement` and no
+`call_key`).
 
 **Kurdish Sorani, stated honestly: `ckb` speech synthesis is effectively
 unavailable in mainstream browsers.** Arabic and English are widely present;
@@ -461,14 +559,92 @@ displays.
 There is deliberately **no** "mark this ticket completed" and no "set serving":
 both follow the Journey fact.
 
-**Staff screen** `/center/queue` — Waiting · Called · Serving · Held · Recently
-completed, with filters and the walk-in form. Every button calls the Action the
-API calls.
+**Staff screen** `{center}.…/manager/queue` (`App\Livewire\Center\QueueBoard`,
+Phase 15) — five lanes, Waiting · Called · In service · On hold · Done (completed
+and cancelled together, newest first); a lane switcher replaces the columns on a
+phone, horizontal lanes on a tablet. Every card shows the number, priority, the
+customer's NAME (never a contact field), service, performing employee,
+destination and a live elapsed timer (derived, never stored). Figures: waiting,
+called, in service, average wait (issued → first call, §24), served, longest
+current wait. Filters: date, branch (scoped), department, destination; **"My
+desk"** (a service point in the URL) is where Call and **Call next**
+(`QueueBoardQuery::nextToCall`, the board's own ordering) send the number.
 
-**Public display** `/q/{center}/{display}` — full-screen, read-only, no login, no
-controls, polling the feed.
+- Which buttons a card offers is `Queue\Application\QueueBoardView` — the state
+  map, the `queue.call` / `queue.manage` split, the stage state for start/finish
+  and the entitlements. A **held ticket is never offered Call** (`held → called`
+  is not an edge): it resumes to its place or starts directly.
+- One-press actions on the card: call / call again, no answer (skip → held),
+  hold, resume, start service, finish service (both through Journey). The ticket
+  drawer (`Queue\TicketPanel`) adds call-to-a-desk, hold with a reason,
+  transfer (desk and/or department), priority (Normal 0 / High 10 / Urgent 20),
+  cancel with a reason, "customer left" (`AbandonQueuedVisit`), print, and the
+  ticket's `queue_ticket_events` history in the viewer's language.
+- **Checked in, no number yet** lists today's active visits with a waiting stage,
+  nothing in service and no open ticket (`QueueBoardQuery::awaitingNumber`) —
+  a booked customer checked in on the visit board gets a number in one press
+  (`IssueTicket`).
+- Walk-in drawer (`Queue\WalkInForm`, shared with the visit board): scoped
+  branch, existing customer by search (masked contact, never a filter) or name +
+  international phone (`PhoneNumber::fromParts`), branch-filtered services,
+  only qualified employees, priority, and a per-opening token. With
+  `queue_management` + `queue.manage` it runs `CreateWalkInTicket`; otherwise
+  `CreateWalkInVisit`. "Print automatically" is a per-device browser preference.
+- Every uuid the screen receives is re-resolved by `QueueBoardQuery::find()`
+  (queue view + branch scope + own scope); a foreign one reads as not found.
+  Refusals — including `EntitlementRequired` — become a translated notice
+  (`Livewire\Center\Queue\OperationalFailure`), never a 500.
+- Polls `wire:poll.5s.visible` while it shows today; the drawers are child
+  components, so a poll never wipes a reason being typed.
+- **Locked:** without `queue_management` the page is the upgrade offer — unless
+  the center already has tickets, which stay readable with every action hidden
+  (§19).
 
-**Printable ticket** `/center/queue/tickets/{uuid}/print`.
+**Setup tab** ("Desks & screens", `queue.display.manage`): service desks
+(`SaveServicePoint`: branch, translated name per content locale, code, prefix,
+department, optional room/device, order, active; archive with confirmation) and
+waiting-room screens (`SaveDisplay`: name, branch, scope branch / department /
+desk, language, recent-call count, chime, voice + voice languages, active;
+"New link" = `rotate()`). The screen's link is offered only with
+`queue_display`; voice is shown locked without `queue_voice`. Read side:
+`QueueSetupQuery` (scoped, permission-checked). The same drawer sets the
+screen's language (the center's languages only) and language rotation (shown
+only when the center has two or more languages: on/off, which languages,
+seconds per language). Each screen row adds **Preview** and **Promotional
+media** (§9): the media drawer (`Queue\DisplayMedia`) switches the panel on or
+off, sets seconds per image, uploads several files at once, pauses, reorders
+(drag or Move up/down), edits caption / alt text per content language, previews
+full size and removes with confirmation. Configured here rather than under
+Appearance because screens are per-branch records behind `queue.display.manage`;
+Appearance is the center-wide site and brand behind `appearance.*`.
+
+**Preview** `{center}.…/manager/queue/displays/{uuid}/preview` (+ `/feed`) —
+the REAL display template and the REAL feed for a signed-in screen manager
+(auth:web, never `public.tenant`; `QueueSetupQuery::display()` for permission
+and branch; `queue_display` or 404). It works while the screen is switched off,
+never speaks, chimes or asks for the start touch (its feed carries neither
+`announcement` nor `call_key`, so the page has nothing to act on), and
+`sample=1` shows a labelled sample call while nobody is called, to see the
+call-over-media layout.
+`lang=` pins ANY language the center has switched on — not only the ones the
+screen cycles (`DisplayLanguages::pinnable()`; any other value is ignored) —
+so each language and its RTL/LTR direction can be checked: the page and its
+feed then carry that language alone (texts, direction, destination names) and
+never rotate. The dialog offers the center's languages (EN / AR / KU), plus
+"Rotate" for a screen that rotates. The Manager frames it landscape or
+portrait at a fixed logical screen — 1600×900 or 900×1600 — scaled down with a
+CSS transform to fit (`resources/js/manager/queue-preview-fit.js`), so the
+display's own small-window breakpoint never applies on an ordinary laptop.
+
+**Public display** `{center}.…/q/{display}` — full-screen, read-only, no login,
+polling the feed. Its only controls act on THAT screen: a one-touch **Start**
+overlay (shown only when the screen chimes or speaks — browsers refuse audio
+before a gesture) and a full-screen toggle that hides itself with the cursor.
+With promotional media on, the queue (current call over recent calls) and the
+media panel share the screen side by side (stacked on a portrait screen).
+
+**Printable ticket** `{center}.…/manager/queue/tickets/{uuid}/print`; the Manager
+shows print links only with `queue.ticket.print` and the `printing` capability.
 
 ## 22. Reception flow
 
@@ -482,7 +658,7 @@ a booking form — reception is standing in front of a customer.
 ## 23. Audit
 
 `queue.service_point.{created,updated,archived}` ·
-`queue.display.{created,updated,key_rotated}` ·
+`queue.display.{created,updated,key_rotated,promotion_updated,media_added,media_updated,media_moved,media_removed}` ·
 `queue.ticket.{issued,called,recalled,skipped,held,resumed,transferred,cancelled,priority_changed}` ·
 `journey.walk_in_created`.
 

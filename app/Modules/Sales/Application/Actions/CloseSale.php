@@ -9,13 +9,17 @@ use App\Kernel\Authorization\Permission;
 use App\Kernel\Identity\Models\User;
 use App\Modules\Sales\Application\SalesAccess;
 use App\Modules\Sales\Application\SalesAudit;
+use App\Modules\Sales\Application\SaleVoidGuards;
 use App\Modules\Sales\Domain\Enums\SaleStatus;
+use App\Modules\Sales\Domain\Events\SaleDraftDiscarded;
+use App\Modules\Sales\Domain\Events\SaleVoided;
 use App\Modules\Sales\Domain\Exceptions\SaleFailed;
 use App\Modules\Sales\Domain\Models\Sale;
 use App\Modules\Sales\Domain\Models\SaleItem;
 use App\Modules\Sales\Domain\SaleMutation;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -35,8 +39,10 @@ use Illuminate\Support\Facades\DB;
  * A finalized sale is never deleted and never returned to draft. Voiding records
  * who, when and why on the SALE; the invoice row is not touched — it cannot be —
  * and renders the void from there. The visit is released, so it can be charged
- * correctly on a new sale. No refund happens here: money settlement is Phase 10
- * (§§19–21).
+ * correctly on a new sale. No refund happens here, and none is triggered: a sale
+ * whose invoice still holds collected money, or has a payment in flight, is
+ * refused by a registered {@see SaleVoidGuards} guard until that money is
+ * refunded or resolved explicitly (§§19–21, docs/19-PAYMENTS.md §18).
  */
 final class CloseSale
 {
@@ -44,6 +50,8 @@ final class CloseSale
         private readonly SalesAccess $access,
         private readonly SaleMutation $mutation,
         private readonly SalesAudit $audit,
+        private readonly SaleVoidGuards $guards,
+        private readonly Dispatcher $events,
     ) {}
 
     /**
@@ -75,6 +83,10 @@ final class CloseSale
             // Inside the transaction: once the draft is deleted, this entry is
             // the only trace it ever existed, so the two commit together.
             $this->audit->record('sale.discarded', $actingUser, $locked, before: $summary);
+
+            // A module that applied a benefit to this draft gives it back in
+            // this same commit. The row is gone, so the event carries the uuid.
+            $this->events->dispatch(new SaleDraftDiscarded($locked->uuid));
         });
     }
 
@@ -107,6 +119,11 @@ final class CloseSale
                 throw SaleFailed::invalidTransition('Only a finalized sale can be voided. Discard a draft instead.');
             }
 
+            // Anything a higher module knows about this sale that makes a void
+            // wrong — money collected, an online payment in flight — refuses
+            // here, under the sale lock, before a single column changes.
+            $this->guards->assertVoidable($locked);
+
             $locked->forceFill([
                 'status' => SaleStatus::Voided,
                 'voided_at' => $at,
@@ -124,6 +141,10 @@ final class CloseSale
                 reason: $reason,
                 severity: AuditSeverity::Warning,
             );
+
+            // What the sale consumed is given back, and what it sold ends, in
+            // this same transaction — by the modules that own them.
+            $this->events->dispatch(new SaleVoided((int) $locked->getKey()));
 
             return $locked;
         });

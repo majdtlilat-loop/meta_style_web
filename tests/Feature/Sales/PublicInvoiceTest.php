@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 use App\Kernel\Audit\Models\PlatformAuditLog;
+use App\Kernel\Audit\Models\TenantAuditLog;
 use App\Kernel\Localization\TenantLocales;
-use App\Kernel\Tenancy\Infrastructure\TenantModel;
 use App\Modules\Sales\Application\Actions\AddSaleLine;
 use App\Modules\Sales\Application\Actions\AdjustSale;
 use App\Modules\Sales\Application\Actions\ChangeSaleLine;
@@ -61,9 +61,25 @@ function piIssue(array $seed, $owner): array
     return [$issued->invoice, (string) $issued->shareToken];
 }
 
+/**
+ * The invoice API. Phase 15: `public.tenant` resolves the center from its own
+ * host, and the `{center}` segment must be that host's slug — the pre-Phase-15
+ * host-less `/api/v1/invoices/{publicKey}/…` form no longer resolves.
+ */
 function piUrl(array $center, string $token): string
 {
-    return '/api/v1/invoices/'.$center['tenant']->publicKey.'/'.$token;
+    $slug = $center['registration']->requested_slug;
+
+    return 'http://'.$slug.'.localhost:8000/api/v1/invoices/'.$slug.'/'.$token;
+}
+
+/**
+ * The customer's invoice page. Phase 15 publishes it on the center's own host,
+ * where the route segment and the host must name the same center.
+ */
+function piPage(array $center): string
+{
+    return 'http://'.$center['registration']->requested_slug.'.localhost:8000/i/';
 }
 
 it('shows a customer their invoice with no login', function (): void {
@@ -80,7 +96,7 @@ it('shows a customer their invoice with no login', function (): void {
         ->and($response->json('data.invoice.grand_total.amount'))->toBe(17000)
         ->and($response->json('data.invoice.lines.0.name'))->toBe('Haircut');
 
-    $this->get('/i/'.$center['tenant']->publicKey.'/'.$token)
+    $this->get(piPage($center).$token)
         ->assertStatus(200)
         ->assertSee($invoice->number)
         ->assertSee('noindex', false);
@@ -199,17 +215,17 @@ it('renders right-to-left for Arabic and Kurdish customers', function (): void {
         return piIssue(piSeed(), $this->ownerWithCatalogAccess());
     });
 
-    $this->get('/i/'.$center['tenant']->publicKey.'/'.$token.'?locale=ar')
+    $this->get(piPage($center).$token.'?locale=ar')
         ->assertStatus(200)
         ->assertSee('dir="rtl"', false)
         ->assertSee('الإجمالي');
 
-    $this->get('/i/'.$center['tenant']->publicKey.'/'.$token.'?locale=ckb')
+    $this->get(piPage($center).$token.'?locale=ckb')
         ->assertStatus(200)
         ->assertSee('dir="rtl"', false)
         ->assertSee('کۆی گشتی');
 
-    $this->get('/i/'.$center['tenant']->publicKey.'/'.$token.'?locale=en')
+    $this->get(piPage($center).$token.'?locale=en')
         ->assertStatus(200)
         ->assertSee('dir="ltr"', false);
 });
@@ -243,8 +259,8 @@ it('persists only a digest of every link secret, and writes neither secret anywh
     // through the API and the page.
     $this->getJson(piUrl($center, $first))->assertStatus(404);
     $this->getJson(piUrl($center, $second))->assertStatus(200);
-    $this->get('/i/'.$center['tenant']->publicKey.'/'.$first)->assertStatus(404);
-    $this->get('/i/'.$center['tenant']->publicKey.'/'.$second)->assertStatus(200);
+    $this->get(piPage($center).$first)->assertStatus(404);
+    $this->get(piPage($center).$second)->assertStatus(200);
 
     expect($first)->toMatch('/^[a-f0-9]{64}$/')
         ->and($second)->toMatch('/^[a-f0-9]{64}$/')
@@ -293,17 +309,22 @@ it('keeps the link secret out of the security audit when a link is probed on ano
         return piIssue(piSeed(), $this->ownerWithCatalogAccess());
     });
 
-    TenantModel::query()->findOrFail($beta['tenant']->id)
-        ->domains()->create(['domain' => 'beta.metastyle.test', 'is_primary' => true]);
+    // Alpha's link, presented on Beta's own host with Alpha's slug in the path.
+    // Since Phase 15 `ResolvePublicTenant` answers that with the same 404 as
+    // any unknown address — a different answer would map which centers exist —
+    // on the API and on the page alike.
+    $alphaSlug = $alpha['registration']->requested_slug;
+    $betaHost = 'http://'.$beta['registration']->requested_slug.'.localhost:8000';
 
-    // Alpha's link, presented on Beta's host: refused and audited as a conflict.
-    $this->getJson('http://beta.metastyle.test'.piUrl($alpha, $token))->assertForbidden();
+    $this->getJson($betaHost.'/api/v1/invoices/'.$alphaSlug.'/'.$token)->assertNotFound();
+    $this->get($betaHost.'/i/'.$token)->assertNotFound();
 
-    $entry = PlatformAuditLog::query()->where('action', 'tenancy.resolution.conflict')->firstOrFail();
+    // Whatever was recorded about the probe, the secret is not in it.
+    $platform = (string) json_encode(PlatformAuditLog::query()->get(), JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    $tenant = $this->asCenter($beta['tenant'], fn (): string => (string) json_encode(TenantAuditLog::query()->get(), JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR));
 
-    // Which surface was probed is still recorded — as the route template.
-    expect($entry->meta['route'] ?? null)->toContain('{token}')
-        ->and(json_encode($entry->getAttributes(), JSON_THROW_ON_ERROR))->not->toContain($token);
+    expect(str_contains($platform, $token))->toBeFalse()
+        ->and(str_contains($tenant, $token))->toBeFalse();
 });
 
 afterEach(function (): void {

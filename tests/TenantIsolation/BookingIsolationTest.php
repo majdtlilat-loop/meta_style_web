@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Kernel\Http\Middleware\EnsureIdempotency;
 use App\Kernel\Tenancy\Contracts\TenantContext;
 use App\Kernel\Tenancy\Exceptions\TenantConnectionNotInitialized;
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Modules\Booking\Contracts\BookingEngine;
 use App\Modules\Booking\Domain\Availability\AvailabilityEngine;
 use App\Modules\Booking\Domain\Data\AvailabilityQuery;
@@ -49,7 +50,7 @@ it('keeps two centers\' appointments entirely separate', function (): void {
                     customer: CustomerRef::details('Customer '.$index, '+964750000000'.$index),
                 ),
                 BookingActor::staff($this->ownerWithCatalogAccess()),
-            );
+            )->appointment;
         });
     }
 
@@ -81,7 +82,7 @@ it('never lets one center\'s bookings block another center\'s availability', fun
                 customer: CustomerRef::details('Alpha Customer', '+9647500000001'),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        );
+        )->appointment;
     });
 
     $this->asCenter($beta['tenant'], function (): void {
@@ -190,7 +191,7 @@ it('never serves one center\'s appointment through another center\'s token', fun
                 customer: CustomerRef::details('Alpha Customer', '+9647500000001'),
             ),
             BookingActor::staff($this->ownerWithCatalogAccess()),
-        )->uuid;
+        )->appointment->uuid;
     });
 
     $betaHeaders = $this->tokenHeaders($this->apiTokenFor($beta['tenant']));
@@ -218,12 +219,12 @@ it('never serves one center\'s public availability from another center\'s key', 
         $this->publishMenu();
     });
 
-    $betaKey = $this->publicKeyOf($beta['tenant']);
+    $betaSlug = $beta['registration']->requested_slug;
 
-    // Beta's public key with ALPHA's branch uuid. The tenant comes from the
-    // path segment and the branch is looked up inside that tenant, so the uuid
-    // simply is not there (ADR-036).
-    $this->getJson("/api/v1/menu/{$betaKey}/availability?".http_build_query([
+    // Beta's public address with ALPHA's branch uuid. The tenant comes from
+    // Beta's own host (the guest surfaces moved there in Phase 15) and the
+    // branch is looked up inside that tenant, so the uuid simply is not there.
+    $this->getJson(app(PlatformHosts::class)->centerUrl($betaSlug, "/api/v1/menu/{$betaSlug}/availability?").http_build_query([
         'branch' => $alphaSeed['branch']->uuid,
         'from' => ISOLATION_DATE,
         'services' => [['service' => $alphaSeed['service']->uuid]],

@@ -1,0 +1,94 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+    min-height: 100%;
+    background: var(--color-canvas);
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+body {
+    min-height: 100vh;
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    font-weight: var(--weight-body);
+    line-height: var(--leading-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+/* Tailwind's preflight flattens headings; the product type scale restores them. */
+h1, h2, h3, h4, h5, h6 {
+    margin-block: 0;
+    color: var(--color-heading);
+    font-weight: var(--weight-heading);
+    line-height: var(--leading-tight);
+    letter-spacing: -.012em;
+    text-wrap: balance;
+}
+h1 { font-size: var(--text-2xl); letter-spacing: -.02em; }
+h2 { font-size: var(--text-lg); }
+h3 { font-size: var(--text-md); }
+h4, h5, h6 { font-size: var(--text-base); }
+html[lang="ar"] :is(h1, h2, h3, h4, h5, h6),
+html[lang="ckb"] :is(h1, h2, h3, h4, h5, h6) { letter-spacing: 0; }
+
+p { margin-block: 0; }
+strong, b { font-weight: var(--weight-strong); }
+small { font-size: var(--text-xs); }
+
+a { color: var(--color-primary-text); text-decoration-thickness: 1px; text-underline-offset: .2em; }
+a:hover { color: var(--color-primary-strong-hover); }
+
+button, input, select, textarea { font: inherit; color: inherit; letter-spacing: inherit; }
+button, [role="button"], summary, label[for], select { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+/* Mixed-script content keeps the correct face regardless of the UI language:
+ * an English interface still shows an Arabic service name in Noto Sans Arabic. */
+:lang(ar), :lang(ckb) { font-family: var(--font-arabic); }
+:lang(en) { font-family: var(--font-latin); }
+
+code, kbd, samp, pre { font-family: var(--font-mono); font-size: .92em; }
+hr { border: 0; border-block-start: 1px solid var(--color-divider); margin-block: var(--space-4); }
+img, svg, video { max-width: 100%; }
+
+::selection { background: color-mix(in srgb, var(--color-primary) 28%, transparent); }
+
+/* One focus treatment everywhere: a 2px ring at 3:1 or better. */
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: var(--radius-xs); }
+
+.sr-only { position: absolute !important; width: 1px !important; height: 1px !important; min-width: 0 !important; min-height: 0 !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+.skip-link { position: fixed; inset-block-start: .5rem; inset-inline-start: .5rem; z-index: var(--z-toast); transform: translateY(-160%); padding: .6rem 1rem; border-radius: var(--radius-sm); background: var(--color-text); color: var(--color-canvas); font-weight: var(--weight-strong); text-decoration: none; transition: transform var(--duration) var(--ease-out); }
+.skip-link:focus { transform: none; }
+
+.sub, .help, .muted { color: var(--color-text-muted); }
+.subtle { color: var(--color-text-subtle); }
+.help { font-size: var(--text-xs); }
+.eyebrow { margin: 0 0 var(--space-1); color: var(--color-primary-text); font-size: var(--text-xs); font-weight: var(--weight-strong); letter-spacing: .08em; text-transform: uppercase; }
+[dir="rtl"] .eyebrow, html[lang="ar"] .eyebrow, html[lang="ckb"] .eyebrow { letter-spacing: 0; text-transform: none; }
+.break-anywhere { overflow-wrap: anywhere; }
+.nowrap { white-space: nowrap; }
+.tabular { font-variant-numeric: tabular-nums; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ltr { direction: ltr; unicode-bidi: isolate; }
+
+.ui-icon { display: block; flex: 0 0 auto; }
+/* Directional icons flip in RTL; symbols (bell, check, calendar) never do. */
+[dir="rtl"] .ui-icon--directional { transform: scaleX(-1); }
+
+[x-cloak] { display: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}

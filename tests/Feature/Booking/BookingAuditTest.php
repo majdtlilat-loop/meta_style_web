@@ -42,7 +42,7 @@ it('attributes a booking to the actor and the channel', function (): void {
                 customer: CustomerRef::details('Sara Ahmed', '0750 123 4567'),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         $entry = TenantAuditLog::query()->where('action', 'booking.appointment.created')->firstOrFail();
 
@@ -70,7 +70,7 @@ it('attributes a guest booking to a guest, with no staff identity', function ():
                 customer: CustomerRef::details('Sara Ahmed', '0750 123 4567'),
             ),
             BookingActor::guest(),
-        );
+        )->appointment;
 
         $entry = TenantAuditLog::query()->where('action', 'booking.appointment.created')->firstOrFail();
 
@@ -97,7 +97,7 @@ it('never writes a customer phone number or email into an audit row', function (
                 customer: CustomerRef::details('Sara Ahmed', '0750 123 4567', 'sara@example.com'),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         app(BookingEngine::class)->reschedule(
             $appointment,
@@ -145,7 +145,7 @@ it('records that a booking note was written, never what it said', function (): v
                 customer: CustomerRef::details('Sara Ahmed', '0750 123 4567'),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         app(ManageAppointmentNotes::class)->add($appointment, 'Allergic to the blue dye', $owner);
 
@@ -176,7 +176,7 @@ it('audits every status change with its own action name', function (): void {
                 customer: CustomerRef::details('Sara Ahmed', '0750 123 4567'),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         app(BookingEngine::class)->transition($appointment, AppointmentStatus::Confirmed, BookingActor::staff($owner));
         app(BookingEngine::class)->transition($appointment->refresh(), AppointmentStatus::Completed, BookingActor::staff($owner));
@@ -204,7 +204,7 @@ it('keeps the cancellation reason as the audit reason, not in the diff', functio
                 customer: CustomerRef::details('Sara Ahmed', '0750 123 4567'),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         app(BookingEngine::class)->cancel($appointment, BookingActor::staff($owner), 'Customer is ill');
 
@@ -231,7 +231,7 @@ it('records the price and duration snapshots so a change would be visible', func
                 customer: CustomerRef::details('Sara Ahmed', '0750 123 4567'),
             ),
             BookingActor::staff($owner),
-        );
+        )->appointment;
 
         $entry = TenantAuditLog::query()->where('action', 'booking.appointment.created')->firstOrFail();
 

@@ -135,7 +135,7 @@ final class CatalogController extends Controller
             description: $data['description'] ?? [],
             isActive: (bool) ($data['is_active'] ?? true),
             isPublic: (bool) ($data['is_public'] ?? true),
-            sortOrder: (int) ($data['sort_order'] ?? 0),
+            sortOrder: isset($data['sort_order']) ? (int) $data['sort_order'] : null,
         );
 
         return ApiResponse::data(['uuid' => $category->uuid], 201);
@@ -229,7 +229,8 @@ final class CatalogController extends Controller
             isPublic: (bool) ($data['is_public'] ?? true),
             isOnlineBookable: (bool) ($data['is_online_bookable'] ?? true),
             availableAtAllBranches: (bool) ($data['available_at_all_branches'] ?? true),
-            sortOrder: (int) ($data['sort_order'] ?? 0),
+            // Absent = the library decides (append on create, keep on update).
+            sortOrder: isset($data['sort_order']) ? (int) $data['sort_order'] : null,
             variations: $data['variations'] ?? null,
             addonIds: $this->idsFor(ServiceAddon::query(), $data['addons'] ?? null),
             branchIds: $this->idsFor(Branch::query(), $data['branches'] ?? null),

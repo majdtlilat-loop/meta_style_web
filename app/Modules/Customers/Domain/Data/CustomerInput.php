@@ -16,6 +16,11 @@ use App\Modules\Customers\Domain\Enums\CustomerSource;
 final readonly class CustomerInput
 {
     /**
+     * `phoneCountry` is the ISO country chosen beside the number in the shared
+     * phone field ([Iraq +964] [750 123 4567]). When it is given the number is
+     * read as a national number of that country (`PhoneNumber::fromParts`);
+     * when it is null the number is parsed on its own, as the API sends it.
+     *
      * @param  list<string>|null  $tagUuids
      */
     public function __construct(
@@ -28,6 +33,7 @@ final readonly class CustomerInput
         public bool $allowOperationalMessages = true,
         public bool $marketingOptIn = false,
         public ?array $tagUuids = null,
+        public ?string $phoneCountry = null,
     ) {}
 
     /**
@@ -50,6 +56,7 @@ final readonly class CustomerInput
             allowOperationalMessages: (bool) ($data['allow_operational_messages'] ?? true),
             marketingOptIn: (bool) ($data['marketing_opt_in'] ?? false),
             tagUuids: $tags,
+            phoneCountry: self::nullableString($data['phone_country'] ?? null),
         );
     }
 

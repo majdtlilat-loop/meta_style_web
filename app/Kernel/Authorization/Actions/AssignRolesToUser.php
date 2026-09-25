@@ -16,9 +16,23 @@ use App\Kernel\Authorization\Permission;
 use App\Kernel\Authorization\SystemRole;
 use App\Kernel\Identity\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Sets which roles a staff account holds.
+ *
+ * Guards, in order:
+ *
+ *  - `staff.access.manage`.
+ *  - The owner account's roles are changed by nobody else, and the owner may
+ *    never drop the Owner role — a center that strips Owner from its only
+ *    owner locks itself out of its own subscription.
+ *  - Nobody changes their own roles otherwise (a manager who removes their
+ *    own access manager role has locked the staff page).
+ *  - The target must be inside the actor's branch scope, and must hold nothing
+ *    the actor does not ({@see StaffAccessRules}).
+ *  - Nobody may grant a role carrying a permission they do not hold.
  */
 final class AssignRolesToUser
 {
@@ -28,38 +42,57 @@ final class AssignRolesToUser
      * @param  list<int>  $roleIds
      *
      * @throws AuthorizationException
+     * @throws ValidationException
      */
     public function __invoke(User $user, array $roleIds, User $actingUser): void
     {
         if (! $actingUser->hasPermission(Permission::StaffAccessManage)) {
-            throw new AuthorizationException('You may not change staff access.');
+            throw new AuthorizationException(__('permissions.errors.access_denied'));
         }
+
+        $roleIds = array_values(array_unique(array_map('intval', $roleIds)));
+        $self = (int) $actingUser->getKey() === (int) $user->getKey();
 
         // The owner account keeps its role. A center that removes Owner from
         // its only owner locks itself out of its own subscription, and no
         // support tool exists yet to put it back.
-        if ($user->is_owner && $actingUser->getKey() !== $user->getKey()) {
-            throw new AuthorizationException('The owner account\'s roles cannot be changed.');
+        if ($user->is_owner && ! $self) {
+            throw new AuthorizationException(__('permissions.errors.owner_roles'));
+        }
+
+        if ($user->is_owner) {
+            $ownerRole = Role::query()->where('key', SystemRole::Owner->value)->value('id');
+
+            if ($ownerRole !== null && ! in_array((int) $ownerRole, $roleIds, true)) {
+                throw new AuthorizationException(__('permissions.errors.owner_keeps_role'));
+            }
+        } elseif ($self) {
+            throw new AuthorizationException(__('permissions.errors.self_roles'));
+        } else {
+            StaffAccessRules::assertReaches($user, $actingUser);
+            StaffAccessRules::assertNotOutranked($user, $actingUser);
         }
 
         $held = $actingUser->permissions();
 
-        /** @var list<Role> $roles */
-        $roles = Role::query()->whereIn('id', $roleIds)->get()->all();
+        $roles = Role::query()->whereIn('id', $roleIds)->get();
+
+        if ($roles->count() !== count($roleIds)) {
+            throw ValidationException::withMessages(['roles' => __('permissions.errors.role_unknown')]);
+        }
 
         foreach ($roles as $role) {
-            foreach ($role->permissionCodes() as $code) {
-                if (! in_array($code, $held, true)) {
-                    throw new AuthorizationException(
-                        'You may not assign a role that grants permissions you do not have.'
-                    );
-                }
+            if (array_diff($role->permissionCodes(), $held) !== []) {
+                throw new AuthorizationException(__('permissions.errors.role_escalation'));
             }
         }
 
         $before = $user->roles()->pluck('key')->all();
 
-        $user->roles()->sync($roleIds);
+        DB::connection('tenant')->transaction(function () use ($user, $roleIds): void {
+            $user->roles()->sync($roleIds);
+        });
+
         $user->forgetPermissionCache();
 
         $after = $user->roles()->pluck('key')->all();

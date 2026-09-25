@@ -6,39 +6,79 @@ namespace App\Kernel\Localization\Http\Middleware;
 
 use App\Kernel\Localization\LanguageRegistry;
 use App\Kernel\Localization\TenantLocales;
+use App\Kernel\Tenancy\Contracts\TenantContext;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Route;
+use Illuminate\Support\Facades\Cookie;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Decides what language this request speaks, once.
  *
- * The chain, in order (docs/07-LOCALIZATION.md §5):
+ * ## Two language systems, never one
  *
- *   1. explicit `?locale=` — must be one the center has enabled
- *   2. the signed-in user's preference
- *   3. Accept-Language, negotiated against the center's enabled locales
- *   4. the center's default locale
- *   5. the platform fallback
+ *   INTERFACE languages   what Meta Style itself is shown in — EN / AR / KU.
+ *                         Staff, the Manager, Super Admin and the platform.
+ *   CONTENT languages     what a CENTER publishes to its customers — the
+ *                         center's own choice (TenantLocales).
  *
- * A requested locale the center has not enabled falls back silently. It is not
- * an error: a customer whose phone is set to French should see the menu in
- * Arabic, not a 404.
+ * A manager may run the Manager in English while the center's customers read
+ * Arabic and Kurdish. Validating the interface against the center's content
+ * languages forced an Arabic-only center's staff into Arabic whatever they
+ * chose. A surface is customer-facing when its route sits behind
+ * `public.tenant` or a customer guard; everything else is the interface.
+ * Livewire replays this middleware against the ORIGINAL route, so a component
+ * update speaks the same language as the page it came from.
  *
- * Runs AFTER tenant resolution, because steps 1–4 all need to know which center
- * this is. With no tenant bound it degrades to the platform fallback rather
- * than failing — the registration and login pages are real pages.
+ * ## The chain (docs/07-LOCALIZATION.md §5)
+ *
+ *   1. explicit `?locale=`
+ *   2. the explicit choice persisted in this session
+ *   3. the same choice remembered in this browser (survives sign-out and an
+ *      expired session)
+ *   4. the signed-in account's preference
+ *   5. Accept-Language — never above an explicit choice
+ *   6. the center's default, then the platform fallback
+ *
+ * A candidate the surface does not allow is skipped, not an error: a customer
+ * whose phone is set to French sees the menu in the center's language.
+ *
+ * Runs AFTER tenant resolution. With no tenant bound it serves the platform.
  */
 final class SetLocale
 {
+    public const SESSION_KEY = 'metastyle.locale';
+
+    public const COOKIE = 'metastyle_locale';
+
+    private const COOKIE_MINUTES = 60 * 24 * 365;
+
     public function __construct(
         private readonly TenantLocales $locales,
         private readonly LanguageRegistry $languages,
+        private readonly TenantContext $tenants,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
-        $locale = $this->locales->resolve($this->requested($request));
+        $allowed = $this->allowedFor($request);
+        $explicit = $this->explicit($request);
+
+        if ($explicit !== null && in_array($explicit, $allowed, true)) {
+            if ($request->hasSession()) {
+                $request->session()->put(self::SESSION_KEY, $explicit);
+            }
+            Cookie::queue(self::COOKIE, $explicit, self::COOKIE_MINUTES);
+        }
+
+        $locale = $this->first($allowed, [
+            $explicit,
+            $this->persisted($request),
+            $this->remembered($request),
+            $this->userPreference($request),
+            $this->negotiate($request, $allowed),
+        ]);
 
         app()->setLocale($locale);
 
@@ -55,42 +95,127 @@ final class SetLocale
     }
 
     /**
-     * The locale the caller asked for, if any. Not yet validated against what
-     * the center has enabled — that is `TenantLocales::resolve()`'s job.
+     * @return list<string>
      */
-    private function requested(Request $request): ?string
+    private function allowedFor(Request $request): array
     {
-        $explicit = $request->query('locale');
+        $allowed = $this->customerFacing($request) ? $this->locales->enabled() : $this->languages->supported();
 
-        if (is_string($explicit) && $explicit !== '') {
-            return $explicit;
+        return array_values(array_filter($allowed, 'is_string'));
+    }
+
+    private function customerFacing(Request $request): bool
+    {
+        if (! $this->tenants->isBound()) {
+            return false;
         }
 
-        $user = $request->user();
+        $route = $request->route();
 
-        if ($user !== null && isset($user->locale) && is_string($user->locale) && $user->locale !== '') {
-            return $user->locale;
+        if (! $route instanceof Route) {
+            return false;
         }
 
-        return $this->negotiate($request);
+        foreach ($route->gatherMiddleware() as $middleware) {
+            if (is_string($middleware) && ($middleware === 'public.tenant' || preg_match('/^(auth|guest):customer/', $middleware) === 1)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
-     * Picks the caller's most-preferred language that this center actually has.
-     *
-     * `getPreferredLanguage` needs the candidate list up front, and it handles
-     * the `ar-IQ` → `ar` narrowing that a hand-rolled parser gets wrong.
+     * @param  list<string>  $allowed
+     * @param  list<?string>  $candidates
      */
-    private function negotiate(Request $request): ?string
+    private function first(array $allowed, array $candidates): string
     {
-        $enabled = $this->locales->enabled();
+        foreach ($candidates as $candidate) {
+            if ($candidate !== null && in_array($candidate, $allowed, true)) {
+                return $candidate;
+            }
+        }
 
-        if ($enabled === []) {
+        $default = $this->locales->default();
+
+        return in_array($default, $allowed, true) ? $default : ($allowed[0] ?? $default);
+    }
+
+    /**
+     * The locale the caller asked for, if any — validated by the caller
+     * against what this surface allows.
+     */
+    private function explicit(Request $request): ?string
+    {
+        $explicit = $request->query('locale');
+
+        return is_string($explicit) && $explicit !== '' ? $explicit : null;
+    }
+
+    private function persisted(Request $request): ?string
+    {
+        if (! $request->hasSession()) {
             return null;
         }
 
-        $preferred = $request->getPreferredLanguage($enabled);
+        $persisted = $request->session()->get(self::SESSION_KEY);
 
-        return is_string($preferred) ? $preferred : null;
+        return is_string($persisted) && $persisted !== '' ? $persisted : null;
+    }
+
+    private function remembered(Request $request): ?string
+    {
+        $remembered = $request->cookie(self::COOKIE);
+
+        return is_string($remembered) && $remembered !== '' ? $remembered : null;
+    }
+
+    /**
+     * Only the guard that belongs HERE: a center's staff guard when a center
+     * is bound, the platform guard otherwise. Asking the default guard on the
+     * platform host let a stray center "remember me" cookie query a tenant
+     * table with no tenant bound.
+     */
+    private function userPreference(Request $request): ?string
+    {
+        $user = $this->tenants->isBound() ? $request->user('web') : $request->user('platform');
+
+        return $user !== null && isset($user->locale) && is_string($user->locale) && $user->locale !== ''
+            ? $user->locale
+            : null;
+    }
+
+    /**
+     * Picks the caller's most-preferred language among those this surface
+     * allows. `getPreferredLanguage` handles the `ar-IQ` → `ar` narrowing that
+     * a hand-rolled parser gets wrong.
+     *
+     * @param  list<string>  $allowed
+     */
+    private function negotiate(Request $request, array $allowed): ?string
+    {
+        if ($allowed === [] || $request->headers->get('Accept-Language') === null) {
+            return null;
+        }
+
+        $preferred = $request->getPreferredLanguage($allowed);
+
+        if (! is_string($preferred)) {
+            return null;
+        }
+
+        // Symfony answers the FIRST allowed locale when nothing the browser
+        // asked for matches. That is not a preference, so it must not outrank
+        // the center's default.
+        foreach ($request->getLanguages() as $language) {
+            $normalised = strtolower(str_replace('-', '_', $language));
+
+            if ($normalised === $preferred || strtok($normalised, '_') === $preferred) {
+                return $preferred;
+            }
+        }
+
+        return null;
     }
 }

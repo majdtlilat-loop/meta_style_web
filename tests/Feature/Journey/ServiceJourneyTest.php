@@ -79,7 +79,7 @@ function sjBook(array $seed, string $time = '10:00'): Appointment
             customer: CustomerRef::details('Sara Ahmed', '+96475'.random_int(10000000, 99999999)),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 it('has no journey until somebody checks the customer in', function (): void {
@@ -388,19 +388,29 @@ it('creates no invoice, sale or payment when a visit completes', function (): vo
 
         expect($journey->fresh()?->status)->toBe(JourneyStatus::Completed);
 
-        // Sales exists since Phase 9: completion wrote nothing to it.
-        foreach (['sales', 'sale_items', 'invoices', 'invoice_items', 'invoice_share_links'] as $table) {
+        // Sales exists since Phase 9, Payments and Finance since Phase 10,
+        // Loyalty, Memberships and Packages since Phase 11: completion wrote
+        // nothing to any of them — no sale, no invoice, no payment, no refund,
+        // no ledger entry, no points, no membership use, no package session. A visit reward is Loyalty's own
+        // after-commit reaction, only for a center that owns `loyalty` with a
+        // visit rule switched on; this one has neither.
+        foreach (['sales', 'sale_items', 'invoices', 'invoice_items', 'invoice_share_links', 'payments', 'refunds', 'finance_entries',
+            'loyalty_accounts', 'loyalty_transactions', 'customer_memberships', 'membership_benefit_usages',
+            'customer_packages', 'package_transactions'] as $table) {
             expect(DB::connection('tenant')->table($table)->count())->toBe(0, "{$table} after completion");
         }
 
         $tables = DB::connection('tenant')->select('SHOW TABLES');
         $names = array_map(static fn (object $row): string => (string) array_values((array) $row)[0], $tables);
 
-        // These modules do not exist yet. Faking their side effects would leave a
-        // center's books full of records nothing can reconcile.
-        foreach (['payments', 'commissions', 'loyalty_transactions'] as $forbidden) {
-            expect($names)->not->toContain($forbidden);
+        // The tables that PROVE those counts mean something exist...
+        foreach (['payments', 'finance_entries', 'loyalty_transactions', 'membership_benefit_usages', 'package_transactions'] as $real) {
+            expect(in_array($real, $names, true))->toBeTrue("{$real} should exist");
         }
+
+        // ...and commissions do not exist yet. Faking their side effects would
+        // leave a center's books full of records nothing can reconcile.
+        expect(in_array('commissions', $names, true))->toBeFalse('commissions should not exist yet');
     });
 });
 

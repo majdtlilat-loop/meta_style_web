@@ -107,6 +107,23 @@ final class BranchClock
     }
 
     /**
+     * The start of the branch-local day `$days` calendar days after `$instant`'s
+     * own local date, as UTC.
+     *
+     * For terms counted in whole local days: something valid for 30 days from
+     * the 5th is usable through the end of the 4th of the next month, local
+     * time, and stops at local midnight — never at whatever UTC hour the
+     * purchase happened to be. Calendar arithmetic on the DATE, then one
+     * conversion, so a DST change inside the term cannot shift it by an hour.
+     */
+    public static function localDayStartAfter(CarbonImmutable $instant, int $days, string $timezone): CarbonImmutable
+    {
+        $date = CarbonImmutable::parse(self::localDate($instant, $timezone), 'UTC')->addDays($days)->format('Y-m-d');
+
+        return self::toUtcOrShift($date, 0, $timezone);
+    }
+
+    /**
      * `0` = Sunday … `6` = Saturday, matching `branch_working_hours`.
      */
     public static function localDayOfWeek(string $date, string $timezone): int

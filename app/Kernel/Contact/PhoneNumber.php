@@ -91,6 +91,66 @@ final readonly class PhoneNumber implements Stringable
     }
 
     /**
+     * A number entered as a country plus the national number — the way the
+     * phone field asks for it ([Iraq +964] [750 123 4567]).
+     *
+     * A typed `+…` or `00…` is taken as the full international number and
+     * the country is ignored. Otherwise the country's trunk prefix is removed
+     * (`0750…` → `750…`), and the national number must fit that country's
+     * length where one is known, and E.164 everywhere.
+     */
+    public static function fromParts(string $country, ?string $number): ?self
+    {
+        $country = mb_strtoupper(trim($country));
+        $display = trim((string) $number);
+        if ($display === '' || ! PhoneCountries::exists($country)) {
+            return null;
+        }
+        $digits = preg_replace('/\D+/', '', $display) ?? '';
+        if (str_starts_with($display, '+') || str_starts_with($digits, '00')) {
+            return self::parse($display, $country);
+        }
+        $code = (string) PhoneCountries::callingCode($country);
+        [$min, $max] = PhoneCountries::lengths($country);
+        $trunk = PhoneCountries::trunkPrefix($country);
+        if ($trunk !== '' && str_starts_with($digits, $trunk) && mb_strlen($digits) - mb_strlen($trunk) >= $min) {
+            $digits = mb_substr($digits, mb_strlen($trunk));
+        }
+        // People also type the calling code without a plus: 9647501234567.
+        if (str_starts_with($digits, $code) && mb_strlen($digits) > $max) {
+            $digits = mb_substr($digits, mb_strlen($code));
+        }
+        $length = mb_strlen($digits);
+        if ($digits === '' || $length < $min || $length > $max || mb_strlen($code.$digits) > 15 || mb_strlen($code.$digits) < 8) {
+            return null;
+        }
+
+        return new self('+'.$code.$digits, $display);
+    }
+
+    /** The country this number belongs to, by its calling code. */
+    public function country(): ?string
+    {
+        return PhoneCountries::countryOf($this->e164);
+    }
+
+    /** The national significant number: the digits after the calling code. */
+    public function national(): string
+    {
+        $code = PhoneCountries::callingCode((string) $this->country()) ?? '';
+
+        return mb_substr($this->e164, 1 + mb_strlen($code));
+    }
+
+    /** "+964 7501234567": the calling code set apart, for reading. Never a query value. */
+    public function international(): string
+    {
+        $code = PhoneCountries::callingCode((string) $this->country());
+
+        return $code === null ? $this->e164 : '+'.$code.' '.$this->national();
+    }
+
+    /**
      * The last digits, for a masked display. Never the whole number.
      */
     public function last(int $count = 2): string
@@ -142,13 +202,13 @@ final readonly class PhoneNumber implements Stringable
     {
         $code = config('metastyle.contact.countries.'.mb_strtoupper($country).'.dialing_code');
 
-        return is_string($code) ? $code : '964';
+        return is_string($code) ? $code : (PhoneCountries::callingCode($country) ?? '964');
     }
 
     private static function trunkPrefixFor(string $country): string
     {
         $trunk = config('metastyle.contact.countries.'.mb_strtoupper($country).'.trunk_prefix');
 
-        return is_string($trunk) ? $trunk : '0';
+        return is_string($trunk) ? $trunk : PhoneCountries::trunkPrefix($country);
     }
 }

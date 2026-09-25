@@ -229,6 +229,7 @@ it('replaces variations by uuid instead of recreating them', function (): void {
 
         $short = $service->variations()->firstOrFail();
         $originalId = $short->id;
+        $long = $service->variations()->where('uuid', '!=', $short->uuid)->firstOrFail();
 
         app(SaveService::class)(new ServiceInput(
             name: ['en' => 'Haircut'],
@@ -242,10 +243,16 @@ it('replaces variations by uuid instead of recreating them', function (): void {
         $service->refresh();
 
         // The kept variation keeps its id, because bookings and invoice lines
-        // will reference it from Phase 6. The dropped one is gone.
-        expect($service->variations()->count())->toBe(1)
-            ->and($service->variations()->firstOrFail()->id)->toBe($originalId)
-            ->and($service->variations()->firstOrFail()->price_minor)->toBe(22000);
+        // reference it. The dropped one is DEACTIVATED, not deleted: package
+        // definitions point at variations with a restricting foreign key, and
+        // history keeps its link (Manager services library, Phase 15).
+        $active = $service->variations()->where('is_active', true)->get();
+
+        expect($active)->toHaveCount(1)
+            ->and($active->firstOrFail()->id)->toBe($originalId)
+            ->and($active->firstOrFail()->price_minor)->toBe(22000)
+            ->and($service->variations()->count())->toBe(2)
+            ->and($long->refresh()->is_active)->toBeFalse();
     });
 });
 

@@ -119,6 +119,13 @@ final class SaleMutation
             }
         }
 
+        // A benefit that belongs to one line is priced against THAT line.
+        $lineIndex = [];
+
+        foreach ($items as $index => $item) {
+            $lineIndex[(int) $item->getKey()] = $index;
+        }
+
         $totals = $this->pricing->calculate(
             array_map(static fn (SaleItem $item): LineInput => new LineInput(
                 unitPriceMinor: $item->unit_price_minor,
@@ -129,6 +136,9 @@ final class SaleMutation
                 type: $adjustment->type,
                 basisPoints: $adjustment->basis_points,
                 amountMinor: $adjustment->amount_minor,
+                targetLine: $adjustment->sale_item_id === null
+                    ? null
+                    : ($lineIndex[$adjustment->sale_item_id] ?? throw SaleFailed::policy('A discount belongs to a line that is no longer on this sale.')),
             ), $adjustments),
         );
 

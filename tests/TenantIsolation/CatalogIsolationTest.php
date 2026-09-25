@@ -10,6 +10,7 @@ use App\Kernel\Notes\Models\InternalNote;
 use App\Kernel\Storage\MediaCollection;
 use App\Kernel\Storage\MediaStore;
 use App\Kernel\Tenancy\Contracts\TenantContext;
+use App\Kernel\Tenancy\PlatformHosts;
 use App\Modules\Catalog\Domain\Models\Service;
 use App\Modules\Catalog\Domain\Models\ServiceAddon;
 use App\Modules\Catalog\Domain\Models\ServiceCategory;
@@ -181,12 +182,23 @@ it('never exposes one center\'s catalog through another\'s public menu', functio
     });
 
     // The guest-facing surface is where a leak would be worst, because nobody
-    // needs an account to look.
-    $body = (string) $this->getJson('/api/v1/menu/'.$this->publicKeyOf($alpha['tenant']))
+    // needs an account to look. The center is its own host; the slug in the
+    // path only names the resource (ADR-076).
+    $alphaSlug = (string) $alpha['registration']->requested_slug;
+    $betaSlug = (string) $beta['registration']->requested_slug;
+    $hosts = app(PlatformHosts::class);
+
+    $body = (string) $this->getJson($hosts->centerUrl($alphaSlug, '/api/v1/menu/'.$alphaSlug))
         ->assertOk()->getContent();
 
     expect($body)->toContain('Haircut')
         ->not->toContain('Beta Secret Treatment');
+
+    // One center's address naming the other center's slug answers nothing.
+    $crossed = $this->getJson($hosts->centerUrl($alphaSlug, '/api/v1/menu/'.$betaSlug))->assertNotFound();
+
+    expect((string) $crossed->getContent())->not->toContain('Beta Secret Treatment');
+    $this->getJson($hosts->centerUrl($betaSlug, '/api/v1/menu/'.$alphaSlug))->assertNotFound();
 });
 
 it('leaves no tenant bound after a guest menu request', function (): void {
@@ -197,7 +209,9 @@ it('leaves no tenant bound after a guest menu request', function (): void {
         $this->seedCatalog();
     });
 
-    $this->getJson('/api/v1/menu/'.$this->publicKeyOf($alpha['tenant']))->assertOk();
+    $slug = (string) $alpha['registration']->requested_slug;
+
+    $this->getJson(app(PlatformHosts::class)->centerUrl($slug, '/api/v1/menu/'.$slug))->assertOk();
 
     $context = app(TenantContext::class);
 

@@ -30,9 +30,17 @@ final class CashierShiftController extends Controller
         $validated = $request->validate([
             'branch' => ['required', 'string'],
             'note' => ['nullable', 'string', 'max:190'],
+            // Minor units, like every amount the API accepts.
+            'opening_cash_minor' => ['nullable', 'integer', 'min:0'],
         ]);
 
-        $shift = $shifts->open($validated['branch'], $user, $validated['note'] ?? null);
+        $shift = $shifts->open(
+            $validated['branch'],
+            $user,
+            $validated['note'] ?? null,
+            null,
+            isset($validated['opening_cash_minor']) ? (int) $validated['opening_cash_minor'] : null,
+        );
 
         return ApiResponse::data(['shift' => $presenter->shift($shift)], 201);
     }

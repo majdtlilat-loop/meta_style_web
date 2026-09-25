@@ -1,0 +1,203 @@
+/*
+ * Manager — pos. Owned by one area: component styles for that area only.
+ * Shared primitives live in platform/components.css.
+ *
+ * The till, the sales history, receipts, cashier shifts, finance, expenses,
+ * payment gateways and POS settings. Tokens only; logical properties only, so
+ * Arabic and Kurdish mirror through the same rules; the dark theme comes from
+ * the tokens themselves.
+ */
+
+/* ══ Money workspace: tabs, date window, summary strip ═══════════════════ */
+.pos-tabs {
+    display: flex;
+    gap: var(--space-1);
+    max-width: 100%;
+    overflow-x: auto;
+    border-block-end: 1px solid var(--color-divider);
+    scrollbar-width: none;
+}
+.pos-tabs::-webkit-scrollbar { display: none; }
+.pos-tabs__tab {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 2.5rem;
+    padding: .4rem .85rem;
+    border-block-end: 2px solid transparent;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-strong);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+}
+.pos-tabs__tab:hover { color: var(--color-text); }
+.pos-tabs__tab[aria-current="page"] { border-block-end-color: var(--color-primary); color: var(--color-primary-text); }
+.pos-tabs__tab:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; border-radius: var(--radius-xs); }
+
+.pos-window { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.pos-window__custom { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.pos-window__custom .field { min-width: 10rem; }
+.pos-window__summary { display: inline-flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+.pos-window__summary .ui-icon { color: var(--color-icon); }
+
+.pos-filters { align-items: end; }
+
+.pos-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--space-3); }
+.pos-strip__item {
+    display: grid;
+    gap: .15rem;
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+}
+.pos-strip__item[data-tone="danger"] { border-color: var(--color-danger-border); background: var(--color-danger-soft); }
+.pos-strip__label { color: var(--color-text-muted); font-size: var(--text-xs); font-weight: var(--weight-strong); }
+.pos-strip__item strong { color: var(--color-heading); font-size: var(--text-lg); font-weight: var(--weight-heading); }
+
+.pos-card-note { margin: 0; padding: var(--space-3) var(--space-4); border-block-start: 1px solid var(--color-divider); }
+.pos-card-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--color-divider); }
+.pos-card-bar:last-child { border-block-end: 0; border-block-start: 1px solid var(--color-divider); }
+.pos-card-bar .search-input { min-width: min(100%, 16rem); }
+
+/* ══ The till ════════════════════════════════════════════════════════════ */
+/* Two panes from a landscape tablet up; the cart keeps to the side and
+   scrolls on its own, so the total and Finalize stay in reach. */
+.till.pos-till__grid { grid-template-columns: minmax(0, 1fr) minmax(20rem, 27rem); }
+@media (max-width: 72rem) and (min-width: 56.01rem) {
+    .till.pos-till__grid { grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem); }
+    .till.pos-till__grid .till__cart { position: sticky; }
+}
+@media (max-width: 56rem) {
+    .till.pos-till__grid { grid-template-columns: 1fr; }
+}
+.pos-till .till__cart.pos-cart {
+    /* The cart column is fixed; nothing inside may widen it past its track. */
+    grid-template-columns: minmax(0, 1fr);
+    max-height: calc(100dvh - var(--topbar-height) - var(--space-8));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+@media (max-width: 56rem) {
+    .pos-till .till__cart.pos-cart { max-height: none; overflow: visible; }
+}
+.pos-cart .segmented { display: flex; flex-wrap: wrap; max-width: 100%; }
+.pos-cart .till__actions { flex-wrap: wrap; }
+.pos-cart .till__actions > .button--lg { flex: 1 1 auto; }
+.pos-cart.is-refreshing { opacity: .75; transition: opacity var(--duration-fast) var(--ease-out); }
+
+.pos-shift-bar { justify-content: space-between; }
+.pos-shift-bar__status { display: grid; gap: .1rem; }
+.pos-shift-bar__form input { min-width: 9rem; }
+
+.pos-catalog { display: grid; gap: var(--space-4); }
+.pos-catalog__search .field-help { margin-block-start: var(--space-1); }
+.pos-catalog__categories { max-width: 100%; }
+.pos-catalog__empty { margin: 0; padding: var(--space-3); border: 1px dashed var(--color-border); border-radius: var(--radius-md); text-align: center; }
+
+.pos-tiles { grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
+.pos-tile { position: relative; min-height: 5.25rem; }
+.pos-tile:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.pos-tile:active { transform: translateY(1px); }
+.pos-tile__hint { color: var(--color-text-subtle); font-size: var(--text-2xs); font-weight: var(--weight-strong); }
+.pos-tile[aria-pressed="true"] .pos-tile__hint { color: var(--color-primary-text); }
+.pos-pick { display: grid; gap: var(--space-3); }
+
+.pos-drafts .row-list__button { min-height: 2.75rem; }
+
+.pos-checkout { margin: 0; }
+.pos-checkout caption { padding: var(--space-2) var(--space-3); color: var(--color-text-muted); font-size: var(--text-xs); font-weight: var(--weight-strong); text-align: start; }
+
+.pos-customer { align-items: center; }
+.pos-customer__search { display: grid; gap: var(--space-2); }
+.pos-customer__results { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.pos-customer__match {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    width: 100%;
+    min-height: 2.75rem;
+    padding: .45rem .75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--color-text);
+    text-align: start;
+    cursor: pointer;
+}
+.pos-customer__match:hover { border-color: var(--color-primary-border); background: var(--color-hover); }
+.pos-customer__match:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.pos-customer__new { padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-muted); }
+
+.pos-lines .cart-line__qty { gap: var(--space-2); }
+.pos-qty { min-width: 1.75rem; text-align: center; font-weight: var(--weight-strong); }
+.pos-kind { color: var(--color-text-subtle); }
+.pos-totals dd { justify-content: flex-end; }
+.pos-actions { position: sticky; inset-block-end: calc(-1 * var(--space-4)); z-index: 1; margin-inline: calc(-1 * var(--space-4)); padding: var(--space-3) var(--space-4); border-block-start: 1px solid var(--color-divider); background: var(--color-surface); }
+@media (max-width: 56rem) {
+    .pos-actions { position: static; margin-inline: 0; padding-inline: 0; }
+}
+.pos-issued .notice p { margin: 0; }
+
+/* Touch: every stepper, remove and tile control at least 40px. */
+@media (pointer: coarse) {
+    .pos-till .icon-button--sm, .pos-money .icon-button--sm { min-width: 2.5rem; min-height: 2.5rem; }
+    .pos-till .button--sm, .pos-money .button--sm, .pos-benefits .button--sm { min-height: 2.5rem; }
+    .pos-tile { min-height: 5.75rem; }
+}
+
+/* ══ Benefits panel (embedded under a draft) ═════════════════════════════ */
+.pos-benefits {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-muted);
+}
+.pos-benefits__head { display: flex; align-items: center; gap: var(--space-2); }
+.pos-benefits__head h3 { margin: 0; font-size: var(--text-sm); }
+.pos-benefits__icon { display: inline-grid; width: 1.75rem; height: 1.75rem; place-items: center; border-radius: var(--radius-sm); background: var(--color-accent-soft); color: var(--color-accent); }
+.pos-benefits__empty { margin: 0; font-size: var(--text-sm); }
+.pos-benefits__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.pos-benefits__row > select, .pos-benefits__row > input { flex: 1 1 12rem; min-width: 0; }
+.pos-benefits__loyalty { display: grid; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--color-surface); }
+.pos-benefits__lines { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.pos-benefits__lines > li { display: grid; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--color-surface); }
+
+/* ══ The invoice's money panel ═══════════════════════════════════════════ */
+.pos-money .pos-pay__fill { justify-self: start; font-size: var(--text-xs); }
+.pos-money .copy-field { margin-block: var(--space-1); }
+.pos-money .timeline__meta { margin-block-start: .15rem; }
+
+/* ══ Shifts, gateways, settings ══════════════════════════════════════════ */
+.pos-shifts .row-list__item { align-items: center; }
+.pos-gateways { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+@media (min-width: 72rem) {
+    .pos-gateways:has(.pos-gateway-form) { grid-template-columns: minmax(0, 1.4fr) minmax(20rem, 1fr); align-items: start; }
+}
+.pos-gateway { align-items: flex-start; flex-wrap: wrap; }
+.pos-gateway .cluster { margin-inline-start: auto; }
+.pos-gateway-form .card__header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.pos-gateway-form .card__footer { justify-content: flex-end; }
+
+.pos-prefix { flex-wrap: wrap; align-items: center; }
+.pos-prefix form { margin-inline-start: auto; }
+.input--prefix { width: 6.5rem; text-transform: uppercase; font-family: inherit; letter-spacing: .06em; }
+
+.pos-categories .row-list__item { align-items: center; }
+.pos-categories .row-list__item[data-muted="true"] .cell-title { color: var(--color-text-muted); }
+
+/* ══ Phones ══════════════════════════════════════════════════════════════ */
+@media (max-width: 40rem) {
+    .pos-window { align-items: stretch; }
+    .pos-window__custom, .pos-window__custom .field { width: 100%; }
+    .pos-shift-bar__form, .pos-shift-bar__form input { width: 100%; }
+    .pos-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pos-prefix form { width: 100%; margin-inline-start: 0; }
+    .pos-prefix form input { flex: 1 1 auto; }
+}

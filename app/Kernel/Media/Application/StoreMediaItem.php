@@ -11,6 +11,7 @@ use App\Kernel\Audit\Enums\AuditCategory;
 use App\Kernel\Authorization\Permission;
 use App\Kernel\Identity\Models\User;
 use App\Kernel\Localization\TranslatedText;
+use App\Kernel\Media\MediaKind;
 use App\Kernel\Media\MediaOwner;
 use App\Kernel\Media\Models\MediaItem;
 use App\Kernel\Storage\MediaCollection;
@@ -21,7 +22,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Validates an uploaded image, stores it, and records it.
+ * Validates an uploaded image, video or favicon, stores it, and records it.
  *
  * VALIDATION IS ON THE BYTES, not on what the client said. `getClientMimeType`
  * and the filename extension are both attacker-controlled: a PHP file renamed
@@ -50,12 +51,17 @@ final class StoreMediaItem
         User $actingUser,
         array $altText = [],
         MediaCollection $collection = MediaCollection::Catalog,
+        MediaKind $kind = MediaKind::Image,
     ): MediaItem {
         if (! $actingUser->hasPermission(Permission::MediaUpload)) {
             throw new AuthorizationException('You may not upload media.');
         }
 
-        $dimensions = $this->validate($file, $owner, $ownerId);
+        $dimensions = match ($kind) {
+            MediaKind::Image => $this->validate($file, $owner, $ownerId),
+            MediaKind::Video => $this->validateVideo($file, $owner, $ownerId),
+            MediaKind::Favicon => $this->validateFavicon($file, $owner, $ownerId),
+        };
 
         $path = $this->store->put(
             $collection,
@@ -111,19 +117,19 @@ final class StoreMediaItem
         $maxDimension = config('metastyle.catalog.media.max_dimension', 4000);
 
         if (! $file->isValid()) {
-            throw ValidationException::withMessages(['file' => 'The upload did not complete.']);
+            throw ValidationException::withMessages(['file' => __('media_upload.incomplete')]);
         }
 
         if ($file->getSize() > $maxBytes) {
             throw ValidationException::withMessages([
-                'file' => sprintf('Images must be %d MB or smaller.', intdiv($maxBytes, 1024 * 1024)),
+                'file' => __('media_upload.image_size', ['max' => intdiv($maxBytes, 1024 * 1024)]),
             ]);
         }
 
         $path = $file->getRealPath();
 
         if ($path === false) {
-            throw ValidationException::withMessages(['file' => 'The upload could not be read.']);
+            throw ValidationException::withMessages(['file' => __('media_upload.unreadable')]);
         }
 
         // The authority on what this file IS. A renamed executable fails here,
@@ -131,7 +137,7 @@ final class StoreMediaItem
         $info = @getimagesize($path);
 
         if ($info === false) {
-            throw ValidationException::withMessages(['file' => 'That file is not an image.']);
+            throw ValidationException::withMessages(['file' => __('media_upload.not_image')]);
         }
 
         [$width, $height] = $info;
@@ -139,13 +145,13 @@ final class StoreMediaItem
 
         if (! in_array($mime, $allowedMimes, true)) {
             throw ValidationException::withMessages([
-                'file' => 'Images must be JPEG, PNG or WebP.',
+                'file' => __('media_upload.image_type'),
             ]);
         }
 
         if ($width > $maxDimension || $height > $maxDimension) {
             throw ValidationException::withMessages([
-                'file' => "Images must be at most {$maxDimension} pixels on each side.",
+                'file' => __('media_upload.image_dimensions', ['max' => $maxDimension]),
             ]);
         }
 
@@ -153,7 +159,7 @@ final class StoreMediaItem
 
         if ($existing >= $owner->maxItems()) {
             throw ValidationException::withMessages([
-                'file' => sprintf('A %s may have at most %d image(s).', $owner->value, $owner->maxItems()),
+                'file' => trans_choice('media_upload.image_limit', $owner->maxItems(), ['count' => $owner->maxItems()]),
             ]);
         }
 
@@ -169,7 +175,111 @@ final class StoreMediaItem
         return match ($mime) {
             'image/png' => 'png',
             'image/webp' => 'webp',
+            'image/x-icon' => 'ico',
+            'video/mp4' => 'mp4',
+            'video/webm' => 'webm',
             default => 'jpg',
         };
+    }
+
+    /**
+     * An MP4 or WebM video, identified from its container header.
+     *
+     * `finfo` and the container signature must BOTH agree: an MP4 carries an
+     * `ftyp` box at byte 4, a WebM starts with the EBML magic number. A
+     * renamed script or an HTML file with a `.mp4` name fails either check.
+     *
+     * @return array{mime: string, width: int|null, height: int|null}
+     *
+     * @throws ValidationException
+     */
+    private function validateVideo(UploadedFile $file, MediaOwner $owner, int $ownerId): array
+    {
+        $maxKb = (int) config('site.media.video_max_kb', 12288);
+        $path = $this->readable($file, $maxKb * 1024, (string) __('media_upload.video_size', ['max' => intdiv($maxKb, 1024)]));
+
+        $mime = (string) (new \finfo(FILEINFO_MIME_TYPE))->file($path);
+        $head = (string) file_get_contents($path, false, null, 0, 16);
+
+        $mp4 = $mime === 'video/mp4' && substr($head, 4, 4) === 'ftyp';
+        $webm = $mime === 'video/webm' && str_starts_with($head, "\x1A\x45\xDF\xA3");
+
+        if (! $mp4 && ! $webm) {
+            throw ValidationException::withMessages(['file' => __('media_upload.video_type')]);
+        }
+
+        $this->assertCapacity($owner, $ownerId);
+
+        return ['mime' => $mp4 ? 'video/mp4' : 'video/webm', 'width' => null, 'height' => null];
+    }
+
+    /**
+     * A square PNG or ICO icon for the browser tab. No SVG, ever.
+     *
+     * @return array{mime: string, width: int, height: int}
+     *
+     * @throws ValidationException
+     */
+    private function validateFavicon(UploadedFile $file, MediaOwner $owner, int $ownerId): array
+    {
+        $maxKb = (int) config('site.media.favicon_max_kb', 256);
+        $minSide = (int) config('site.media.favicon_min_px', 16);
+        $maxSide = (int) config('site.media.favicon_max_px', 512);
+        $path = $this->readable($file, $maxKb * 1024, (string) __('media_upload.icon_size', ['max' => $maxKb]));
+
+        $info = @getimagesize($path);
+        $mime = (string) (new \finfo(FILEINFO_MIME_TYPE))->file($path);
+
+        if ($info === false
+            || ! in_array($info[2], [IMAGETYPE_PNG, IMAGETYPE_ICO], true)
+            || ! in_array($mime, ['image/png', 'image/x-icon', 'image/vnd.microsoft.icon'], true)) {
+            throw ValidationException::withMessages(['file' => __('media_upload.icon_type')]);
+        }
+
+        [$width, $height] = [(int) $info[0], (int) $info[1]];
+
+        if ($width !== $height || $width < $minSide || $width > $maxSide) {
+            throw ValidationException::withMessages([
+                'file' => __('media_upload.icon_square', ['min' => $minSide, 'max' => $maxSide]),
+            ]);
+        }
+
+        $this->assertCapacity($owner, $ownerId);
+
+        return ['mime' => $info[2] === IMAGETYPE_ICO ? 'image/x-icon' : 'image/png', 'width' => $width, 'height' => $height];
+    }
+
+    /**
+     * @throws ValidationException
+     */
+    private function readable(UploadedFile $file, int $maxBytes, string $tooLarge): string
+    {
+        if (! $file->isValid()) {
+            throw ValidationException::withMessages(['file' => __('media_upload.incomplete')]);
+        }
+
+        if ($file->getSize() > $maxBytes) {
+            throw ValidationException::withMessages(['file' => $tooLarge]);
+        }
+
+        $path = $file->getRealPath();
+
+        if ($path === false) {
+            throw ValidationException::withMessages(['file' => __('media_upload.unreadable')]);
+        }
+
+        return $path;
+    }
+
+    /**
+     * @throws ValidationException
+     */
+    private function assertCapacity(MediaOwner $owner, int $ownerId): void
+    {
+        if (MediaItem::query()->for($owner, $ownerId)->count() >= $owner->maxItems()) {
+            throw ValidationException::withMessages([
+                'file' => trans_choice('media_upload.item_limit', $owner->maxItems(), ['count' => $owner->maxItems()]),
+            ]);
+        }
     }
 }

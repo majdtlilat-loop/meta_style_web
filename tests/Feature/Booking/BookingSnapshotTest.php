@@ -51,7 +51,7 @@ function bookOne(array $seed, array $line = []): Appointment
             customer: CustomerRef::existing(test()->seedCustomer('Sara '.uniqid(), null)->uuid),
         ),
         BookingActor::staff(test()->ownerWithCatalogAccess()),
-    );
+    )->appointment;
 }
 
 it('keeps the agreed price when the service price changes later', function (): void {

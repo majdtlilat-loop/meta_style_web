@@ -11,8 +11,10 @@ use App\Kernel\Http\ApiResponse;
 use App\Kernel\SaaS\Models\Registration;
 use App\Kernel\SaaS\RegistrationAccessToken;
 use App\Modules\Onboarding\Application\RegistrationService;
+use App\Modules\Onboarding\Domain\Exceptions\CenterSlugUnavailable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Public self-registration.
@@ -35,10 +37,16 @@ final class RegistrationController extends Controller
 {
     public function store(RegisterCenterRequest $request, RegistrationService $registrations): JsonResponse
     {
-        /** @var array{center_name: string, owner_name: string, owner_email?: string|null, owner_phone?: string|null, password: string, locale?: string|null, country?: string|null} $input */
+        /** @var array{center_name: string, center_slug: string, owner_name: string, owner_email: string, owner_phone?: string|null, password: string, locale?: string|null, country?: string|null} $input */
         $input = $request->validated();
 
-        $result = $registrations->register($input, $this->idempotencyKey($request, $input));
+        try {
+            $result = $registrations->register($input, $this->idempotencyKey($request, $input));
+        } catch (CenterSlugUnavailable) {
+            throw ValidationException::withMessages([
+                'center_slug' => __('center_auth.registration.slug_unavailable'),
+            ]);
+        }
 
         $payload = $result['registration']->toStatusPayload();
 
@@ -153,6 +161,7 @@ final class RegistrationController extends Controller
 
         return 'derived:'.substr(hash('sha256', implode('|', [
             mb_strtolower((string) $input['center_name']),
+            mb_strtolower((string) ($input['center_slug'] ?? '')),
             mb_strtolower((string) ($input['owner_email'] ?? '')),
             (string) ($input['owner_phone'] ?? ''),
         ])), 0, 100);

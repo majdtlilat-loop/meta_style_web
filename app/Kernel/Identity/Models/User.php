@@ -10,6 +10,7 @@ use App\Kernel\Authorization\Permission;
 use App\Kernel\Tenancy\Concerns\UsesTenantConnection;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\HasApiTokens;
@@ -32,6 +33,7 @@ use Laravel\Sanctum\HasApiTokens;
  * @property bool $is_active
  * @property bool $is_owner
  * @property bool $all_branches
+ * @property Carbon|null $last_login_at
  */
 final class User extends Authenticatable
 {

@@ -93,15 +93,18 @@ contract migrations cannot ship until it is clean.
 
 ### 3.3 Scheduled work the deployment must actually run
 
-The scheduler is not decorative. Two entries have a data-retention consequence:
+The scheduler is not decorative. Three entries have a data-retention
+consequence, and two have a customer-facing one:
 
 | Command | Cadence | If it does not run |
 |---|---|---|
 | `metastyle:registration:sweep` | hourly | Failed registrations keep an encrypted bootstrap password hash past its retry window (ADR-031). |
 | `metastyle:idempotency:sweep` | hourly | Expired idempotency keys are never deleted. Each one holds the RESPONSE BODY it replays, so the table grows by a row per booking forever and keeps stored responses well past their 24-hour life. Correctness is unaffected — an expired row is also reclaimed by the next request that reuses its key. |
 | trial expiry | hourly | Stored subscription status drifts. Enforcement is unaffected — expiry is computed on read. |
+| `metastyle:reconcile --days=3` | hourly | An after-commit benefit reaction lost to a crash stays lost: points not earned, a paid package not activated, a review invitation never issued. Balance-changing Actions reconcile the one customer in front of them first, so a till stays correct; everything nobody looks at does not (docs/21 §1, docs/22 §4). |
+| `metastyle:notifications:sweep` | hourly | Appointment reminders and benefit-expiry warnings are never written, and notifications are kept past their retention. Nothing else breaks — the appointment, the invoice and the benefit are the record, and being told is not (docs/23 §19). |
 
-Both sweeps walk every center. They attempt each one independently and step over
+Every one of them walks every center. They attempt each one independently and step over
 the ones that fail, so a single unreachable tenant database cannot leave every
 center after it unswept — but they exit non-zero when that happens, because a
 pass that silently skipped part of the platform is not a success. **Alert on the
@@ -153,6 +156,32 @@ build must be re-provisioned or its Phase 9 tables rebuilt.
 
 Before go-live at a multi-branch center, set an invoice prefix for every branch
 except the main one (ADR-055). Run `metastyle:roles:sync --all`.
+
+#### Phase 10 release note — expand only
+
+Eight new tenant tables (`payment_gateway_accounts`, `payments`, `refunds`,
+`payment_webhook_events`, `expense_categories`, `expenses`, `finance_entries`,
+`cashier_shift_reconciliations`) and one nullable column,
+`cashier_shifts.opening_cash_minor` — nine `2026_09_14_*` tenant migrations. No
+existing column changes, nothing is backfilled, nothing is added to the control
+database.
+
+- **Run `metastyle:roles:sync --all`** — six new permission codes (docs/20
+  §Permissions). Without it nobody can take a payment, and the till and the sales
+  list show no money panel at all.
+- **`FIB_LIVE_BASE_URL`** (https) must be set before any center can configure a
+  live FIB account; the sandbox host is fixed in `config/payments.php`. Leave it
+  unset until a real FIB sandbox payment has been run against this release
+  (ADR-060).
+- **Payment callback URLs** are `https://{app host}/api/v1/payments/{center public
+  key}/gateways/{account uuid}/webhook`; the app URL must be the public https URL
+  providers can reach.
+- **`APP_KEY` now protects center merchant credentials.** Rotate only with the old
+  key in `APP_PREVIOUS_KEYS`; no re-encryption command exists yet (docs/08 §10),
+  so a previous key cannot be retired. Unreadable credentials fail closed
+  (docs/19 §Operations).
+- The public invoice path `/i/{center}/{token}` carries a bearer secret: configure
+  the web server not to write it to access logs.
 
 ### 3.1 Rollback
 
@@ -356,6 +385,7 @@ php artisan metastyle:doctor --production
 | Debug mode | `APP_DEBUG=true` | Stack traces expose database names, credentials and tenant ids to anyone who can trigger an error. |
 | Application key | empty `APP_KEY` | The encrypted bootstrap credential (ADR-031) can neither be written nor read. |
 | Session driver | `array` (fails), `file` (warns) | `array` discards the session, so nobody stays signed in; `file` breaks the moment there are two app servers, and on web routes the session is what names the tenant (ADR-030). |
+| Advanced Reports connection | missing host/username fails only when `REPORTS_ADVANCED_ENABLED=true`; otherwise warns | Standard Reports use Primary and must remain deployable without a replica. Once the paid Advanced product can be enabled, running it without Reporting would violate its no-fallback contract. |
 
 Warnings do not fail the command. Failures exit non-zero, so the deploy stops.
 
@@ -370,7 +400,76 @@ store that satisfies both: `database` is shared but cannot do tags; `array` can
 do tags but is per-process. Local and test runs still require **no** Redis
 (ADR-025) — that split is deliberate and is what these checks protect.
 
-## 12. Anti-patterns
+## 12. Phase 13 provider verification — manual, once per environment
+
+Both Phase 13 adapters are implemented against documentation and exercised by
+contract tests against recorded response shapes. **Neither has run against live
+credentials.** The automated gates deliberately do not depend on one: a suite
+that needed a real key would spend credits on every run and fail whenever a
+provider had a bad afternoon.
+
+So this is a checklist a person works through once per environment, after the
+gates are green and before a center is onboarded.
+
+### 12.1 Before anything
+
+```bash
+php artisan metastyle:doctor --production
+```
+
+It fails closed if `BOOKING_VERIFICATION_ACTIVE_KEY` names a version with no
+key, or if any configured key is under 32 bytes (ADR-069). Fix that first — a
+deployment without it issues codes nothing can verify.
+
+### 12.2 OpenAI
+
+Set `OPENAI_API_KEY`. Then, for one test center with `rayan_ai` granted:
+
+1. **One controlled reply.** Message the center's WhatsApp number with something
+   trivial ("what time do you close?"). Expect a reply, and a row in `ai_runs`
+   with `status = completed`, a real `model`, and non-null token counts.
+2. **One tool-call flow.** Ask something that needs a lookup ("what services do
+   you do?"). Expect ≥1 row in `ai_tool_calls` with `result = ok`, and the run's
+   `turns` ≥ 2.
+3. **Usage recorded.** `/center/usage` shows the run and the tokens, and
+   `usage_events` has one row per fact.
+
+If the reply never arrives, check `ai_runs.failure_code` before anything else:
+`not_authorised` is the key, `rate_limited` is the account, `timeout` is the
+network, `truncated_*` is `max_output_tokens`.
+
+### 12.3 Meta WhatsApp Cloud
+
+Configure the center's account at `/center/conversations` → WhatsApp settings,
+then paste the webhook URL it displays into the Meta app.
+
+1. **Verification challenge.** Meta's "Verify and save" must succeed. If it does
+   not, the `verify_token` does not match — nothing else produces that failure.
+2. **One inbound message.** Send one from a real phone. Expect a `conversations`
+   row, a `messages` row with `direction = inbound`, and a
+   `whatsapp_webhook_events` row with `signature_verified = true`.
+3. **One outbound message.** Reply from the staff inbox. Expect
+   `delivery_state = sent` and a `provider_message_id` beginning `wamid.`.
+4. **One status callback.** Within a few seconds the same row should carry
+   `delivered_at`. If it stays `pending`, the webhook is not reaching the
+   endpoint for statuses — check the Meta app's subscribed fields.
+
+A `403` from the webhook is deliberately opaque. The reason is on the
+`whatsapp_webhook_events` row: `signature_invalid` means the app secret is
+wrong, `account_unknown` means the URL's account uuid is.
+
+### 12.4 Report honestly
+
+Until every box above is ticked in a given environment, the correct statement is:
+
+> OPENAI ADAPTER IMPLEMENTED — LIVE CREDENTIAL TEST PENDING
+> META CLOUD API ADAPTER IMPLEMENTED — LIVE CREDENTIAL TEST PENDING
+
+Not "WhatsApp is live". An integration that looks like it works is worse than an
+honest "not verified yet", because it would be trusted with a center's
+customers.
+
+## 13. Anti-patterns
 
 | Anti-pattern | Why |
 |---|---|
@@ -389,6 +488,10 @@ do tags but is per-process. Local and test runs still require **no** Redis
 | Shipping Phase 7 without reading the role note in §3.3 | Employee-role users lose branch-wide appointment visibility on sync. Intended, and worth announcing. |
 | Shipping Phase 8 without `metastyle:roles:sync --all` | Six new queue permissions exist and nobody holds them. The queue screen is simply empty. |
 | Shipping Phase 9 without `metastyle:roles:sync --all` | Nine new sales permissions exist and nobody holds them. The till and the sales list are unreachable. |
+| Shipping Phase 10 without `metastyle:roles:sync --all` | Six new payments and finance permissions exist and nobody holds them. Invoices are issued and nobody can take payment against them. |
+| Shipping Phase 14 without `metastyle:roles:sync --all` | `report.view` and `report.export` exist but established Owner/Manager roles do not receive them. |
+| Enabling `REPORTS_ADVANCED_ENABLED` before configuring `DB_REPORTING_*` | The production doctor fails, by design. Advanced Reports may never silently read Primary. |
+| Rotating `APP_KEY` without `APP_PREVIOUS_KEYS` | Every center's gateway credentials stop decrypting; online payments stop until each manager re-enters them. |
 | A second branch issuing its first invoice | Refused until a manager sets `invoice_prefix` for that branch — deliberate (ADR-055). Set prefixes for every non-main branch before go-live. |
 | Expecting a WebSocket server | There is none. The queue display POLLS, deliberately (ADR-052). Nothing new to run, nothing new to supervise. |
 | Shipping without `metastyle:doctor` | Every row in §11 fails without saying so. |

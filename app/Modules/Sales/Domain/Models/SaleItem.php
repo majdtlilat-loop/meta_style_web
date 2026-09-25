@@ -46,6 +46,8 @@ use Illuminate\Support\Str;
  * @property int $line_total_minor
  * @property string $currency
  * @property string|null $note
+ * @property string|null $offering_type for an `offering` line: which catalog sold it (opaque to Sales)
+ * @property string|null $offering_reference and which item of that catalog
  */
 final class SaleItem extends Model
 {

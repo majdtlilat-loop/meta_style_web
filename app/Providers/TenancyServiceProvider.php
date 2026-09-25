@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Kernel\Reporting\ReportConnection;
 use App\Kernel\Tenancy\Contracts\TenantContext;
 use App\Kernel\Tenancy\Contracts\TenantResolver;
 use App\Kernel\Tenancy\Infrastructure\StanclTenantContext;
 use App\Kernel\Tenancy\Infrastructure\StanclTenantResolver;
+use App\Kernel\Tenancy\PlatformHosts;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Stancl\Tenancy\Events\TenancyEnded;
@@ -34,6 +36,12 @@ final class TenancyServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $hosts = $this->app->make(PlatformHosts::class);
+        $this->app->make('config')->set('tenancy.central_domains', [
+            $hosts->corporateHost(),
+            $hosts->superAdminHost(),
+        ]);
+
         $this->app->singleton(StanclTenantContext::class);
         $this->app->singleton(StanclTenantResolver::class);
 
@@ -50,6 +58,9 @@ final class TenancyServiceProvider extends ServiceProvider
         // storage paths all stayed central. Silent, and catastrophic.
         Event::listen(TenancyInitialized::class, BootstrapTenancy::class);
         Event::listen(TenancyEnded::class, RevertToCentralContext::class);
+        Event::listen(TenancyEnded::class, static function (): void {
+            app(ReportConnection::class)->forget();
+        });
     }
 
     /**

@@ -12,6 +12,7 @@ use App\Kernel\Authorization\Permission;
 use App\Kernel\Entitlements\Entitlements;
 use App\Kernel\Identity\Models\User;
 use App\Kernel\Localization\LanguageRegistry;
+use App\Kernel\Localization\TenantLocales;
 use App\Modules\Branches\Domain\Models\Branch;
 use App\Modules\Departments\Domain\Models\Department;
 use App\Modules\Queue\Domain\Exceptions\QueueFailed;
@@ -40,6 +41,15 @@ use Illuminate\Auth\Access\AuthorizationException;
  * page, and center-authored script on one is stored XSS against that center's
  * own customers (ADR-038).
  *
+ * ## Rotating languages
+ *
+ * A screen may cycle its labels through several of the CENTER's languages
+ * (`rotation_*`). Every language named must be one the center has switched on
+ * — a screen can never switch on a language the center has not — and at least
+ * two are needed, or there is nothing to rotate. The interval is clamped
+ * (5–60 s). Presentation only: the ticket voice keeps its own
+ * `voice_locales` (docs/17-QUEUE.md §§9, 16).
+ *
  * ## Rotating the key
  *
  * `rotate()` replaces the public identifier and nothing else. A screen that was
@@ -51,6 +61,7 @@ final class SaveDisplay
     public function __construct(
         private readonly Entitlements $entitlements,
         private readonly LanguageRegistry $languages,
+        private readonly TenantLocales $centerLocales,
         private readonly Audit $audit,
     ) {}
 
@@ -100,6 +111,7 @@ final class SaveDisplay
             'voice_enabled' => (bool) ($input['voice_enabled'] ?? $display->voice_enabled ?? true),
             'voice_locales' => $this->voiceLocales($input['voice_locales'] ?? null, $display),
             'is_active' => (bool) ($input['is_active'] ?? $display->is_active ?? true),
+            ...$this->rotation($input, $display),
         ];
 
         if ($display instanceof QueueDisplay) {
@@ -124,6 +136,8 @@ final class SaveDisplay
                 'locale' => $saved->locale,
                 'is_active' => $saved->is_active,
                 'voice_enabled' => $saved->voice_enabled,
+                'rotation_enabled' => $saved->rotation_enabled,
+                'rotation_locales' => $saved->rotationLocales(),
                 // The public key is NOT audited. An audit row is readable by
                 // more people than a display URL should be.
             ],
@@ -249,6 +263,68 @@ final class SaveDisplay
         // Clamped, not trusted: a stored 0 blanks the screen and a stored 500
         // makes every three-second poll read a day of tickets (§19).
         return max(1, min(QueueDisplay::MAX_RECENT, (int) $limit));
+    }
+
+    /**
+     * Language rotation: the center's own languages only, at least two, and a
+     * clamped interval. Keys left out keep what the screen has.
+     *
+     * A language already on the screen's list may stay there after the center
+     * switches it off — disabling never deletes a choice, and turning the
+     * language back on restores it (DisplayLanguages). Only a NEWLY added
+     * language must be one the center has on.
+     *
+     * @param  array<string, mixed>  $input
+     * @return array{rotation_enabled: bool, rotation_locales: list<string>|null, rotation_seconds: int}
+     *
+     * @throws QueueFailed
+     */
+    private function rotation(array $input, ?QueueDisplay $display): array
+    {
+        $enabled = (bool) ($input['rotation_enabled'] ?? $display->rotation_enabled ?? false);
+
+        $locales = $display?->rotation_locales;
+        $stored = $display?->rotationLocales() ?? [];
+
+        if (array_key_exists('rotation_locales', $input)) {
+            $locales = [];
+
+            foreach (is_array($input['rotation_locales']) ? $input['rotation_locales'] : [] as $locale) {
+                if (! is_string($locale) || $locale === '') {
+                    continue;
+                }
+
+                if (! $this->languages->supports($locale)) {
+                    throw QueueFailed::policy('That language is not one this platform knows.');
+                }
+
+                // The center decides which languages exist for it; a screen
+                // only chooses among them (docs/07-LOCALIZATION.md §4).
+                if (! $this->centerLocales->isEnabled($locale) && ! in_array($locale, $stored, true)) {
+                    throw QueueFailed::policy('That language is not switched on for this center.');
+                }
+
+                $locales[] = $locale;
+            }
+
+            $locales = array_values(array_unique($locales));
+        }
+
+        if ($enabled && count($locales ?? []) < 2) {
+            throw QueueFailed::policy('Choose at least two languages to rotate.');
+        }
+
+        $seconds = $input['rotation_seconds'] ?? null;
+
+        return [
+            'rotation_enabled' => $enabled,
+            'rotation_locales' => $locales === [] ? null : $locales,
+            // Clamped, not trusted: 0 would strobe the screen, 255 would
+            // strand a room in a language most of it cannot read.
+            'rotation_seconds' => is_numeric($seconds)
+                ? max(QueueDisplay::MIN_ROTATION_SECONDS, min(QueueDisplay::MAX_ROTATION_SECONDS, (int) $seconds))
+                : ($display?->rotationSeconds() ?? 10),
+        ];
     }
 
     /**
